@@ -12,22 +12,59 @@ from keras import regularizers
 from keras.utils import np_utils
 import keras.backend as K
 import keras
+from keras.regularizers import l2
 
 import tensorflow as tf
-from datasets import get_dataset
+#from datasets import get_dataset
 
 
 import sys
 import os
 import numpy as np
 import argparse
+from os.path import isfile, join
+from random import randint, shuffle
+import time
+import glob
+import cv2
 
+import deb
+t0 = time.time()
+
+
+def batch_label_to_one_hot(im):
+        class_n=np.unique(im).shape[0]
+        #deb.prints(class_n)
+        im_one_hot=np.zeros((im.shape[0],im.shape[1],im.shape[2],class_n))
+        #print(im_one_hot.shape)
+        #print(im.shape)
+        for clss in range(0,class_n):
+            im_one_hot[:,:,:,clss][im[:,:,:]==clss]=1
+        return im_one_hot
+
+
+def read_image(fn):
+    img = np.load(fn)    
+    return img   
+def minibatch(data, batchsize):
+    length = len(data)
+    epoch = i = 0
+    tmpsize = None    
+    while True:
+        size = tmpsize if tmpsize else batchsize
+        if i+size > length:
+            shuffle(data)
+            i = 0
+            epoch+=1        
+        rtn = [read_image(data[j]) for j in range(i,i+size)] # Pick a batch
+        i+=size
+        tmpsize = yield epoch, np.float32(rtn)   
 class ADDA():
-    def __init__(self, lr):
+    def __init__(self, lr, window_len=32, channels=3):
         # Input shape
-        self.img_rows = 32
-        self.img_cols = 32
-        self.channels = 3
+        self.img_rows = window_len
+        self.img_cols = window_len
+        self.channels = channels
         self.img_shape = (self.img_rows, self.img_cols, self.channels)
         
         self.src_flag = False
@@ -46,15 +83,15 @@ class ADDA():
         inp = Input(shape=self.img_shape)
         x = Conv2D(32, kernel_size=(3, 3), activation='relu', input_shape=self.img_shape, padding='same')(inp)
         x = Conv2D(64, kernel_size=(3, 3), activation='relu', padding='same')(x)
-        x = MaxPooling2D(pool_size=(2, 2))(x)
-        x = Conv2D(256, kernel_size=(3, 3), activation='relu', padding='same')(x)
+        #x = MaxPooling2D(pool_size=(2, 2))(x)
+        #x = Conv2D(256, kernel_size=(3, 3), activation='relu', padding='same')(x)
         x = Conv2D(128, kernel_size=(3, 3), activation='relu', padding='same')(x)
-        x = Conv2D(64, kernel_size=(3, 3), activation='relu', padding='same')(x)
-        x = MaxPooling2D(pool_size=(2, 2))(x)
-        x = Conv2D(128, kernel_size=(3, 3), activation='relu', input_shape=self.img_shape, padding='same')(inp)
-        x = Conv2D(64, kernel_size=(3, 3), activation='relu', padding='same')(x)
-        x = Conv2D(32, kernel_size=(3, 3), activation='relu', padding='same')(x)
-        x = MaxPooling2D(pool_size=(2, 2))(x)
+        #x = Conv2D(64, kernel_size=(3, 3), activation='relu', padding='same')(x)
+        #x = MaxPooling2D(pool_size=(2, 2))(x)
+        #x = Conv2D(128, kernel_size=(3, 3), activation='relu', input_shape=self.img_shape, padding='same')(inp)
+        #x = Conv2D(64, kernel_size=(3, 3), activation='relu', padding='same')(x)
+        #x = Conv2D(32, kernel_size=(3, 3), activation='relu', padding='same')(x)
+        #x = MaxPooling2D(pool_size=(2, 2))(x)
         self.source_encoder = Model(inputs=(inp), outputs=(x))
         
         self.src_flag = True
@@ -74,18 +111,19 @@ class ADDA():
             self.target_encoder.load_weights(weights, by_name=True)
         
     def get_source_classifier(self, model, weights=None):
-        
-        x = Flatten()(model.output)
-        x = Dense(128, activation='relu')(x)
-        x = Dense(10, activation='softmax')(x)
-        
+        nb_classes=2
+        weight_decay=1E-4
+
+        x = Conv2D(nb_classes, (1, 1), activation='softmax', padding='same', kernel_regularizer=l2(weight_decay),
+                          use_bias=False)(model.output)
+
         source_classifier_model = Model(inputs=(model.input), outputs=(x))
         
         if weights is not None:
             source_classifier_model.load_weights(weights)
         
         return source_classifier_model
-    
+
     def define_discriminator(self, shape):
         
         inp = Input(shape=shape)
@@ -118,50 +156,81 @@ class ADDA():
             disc.load_weights(weights, by_name=True)
         
         return disc
-      
-    def train_source_model(self, model, epochs=2000, batch_size=128, save_interval=1, start_epoch=0):
 
-        (train_x, train_y), (test_x, test_y) = get_dataset('svhn')
+    def train_source_model(self, model, data, batch_size=6, epochs=2000, save_interval=1, start_epoch=0):
+
+        # (train_x, train_y), (test_x, test_y) = get_dataset('svhn')
         
-        datagen = ImageDataGenerator(data_format='channels_last', 
-                                rescale=1./255, 
-                                rotation_range=40, 
-                                width_shift_range=0.2, 
-                                height_shift_range=0.2)
+        # datagen = ImageDataGenerator(data_format='channels_last', 
+        #                         rescale=1./255, 
+        #                         rotation_range=40, 
+        #                         width_shift_range=0.2, 
+        #                         height_shift_range=0.2)
        
-        evalgen = ImageDataGenerator(data_format='channels_last', 
-                                rescale=1./255)
+        # evalgen = ImageDataGenerator(data_format='channels_last', 
+        #                         rescale=1./255)
+            
+
+        # Generator fcn. Increases epoc/shuffles data 
+
         
+        # Define source data generator
+        batch_generator={}
+        batch_generator['im']=minibatch(data['im'], batch_size)
+        batch_generator['label']=minibatch(data['label'], batch_size)
+
+
+
         model.compile(loss='categorical_crossentropy', optimizer=self.src_optimizer, metrics=['accuracy'])
         
         if not os.path.isdir('data'):
             os.mkdir('data')
         
-        saver = keras.callbacks.ModelCheckpoint('data/svhn_encoder_{epoch:02d}.hdf5', 
-                                        monitor='val_loss', 
-                                        verbose=1, 
-                                        save_best_only=False, 
-                                        save_weights_only=True, 
-                                        mode='auto', 
-                                        period=save_interval)
+        # saver = keras.callbacks.ModelCheckpoint('data/svhn_encoder_{epoch:02d}.hdf5', 
+        #                                 monitor='val_loss', 
+        #                                 verbose=1, 
+        #                                 save_best_only=False, 
+        #                                 save_weights_only=True, 
+        #                                 mode='auto', 
+        #                                 period=save_interval)
 
-        scheduler = keras.callbacks.ReduceLROnPlateau(monitor='val_loss', factor=0.75, patience=10, verbose=0, mode='min')
+        # scheduler = keras.callbacks.ReduceLROnPlateau(monitor='val_loss', factor=0.75, patience=10, verbose=0, mode='min')
 
-        if not os.path.isdir('data/tensorboard'):
-            os.mkdir('data/tensorboard')
+        # if not os.path.isdir('data/tensorboard'):
+        #     os.mkdir('data/tensorboard')
     
-        visualizer = keras.callbacks.TensorBoard(log_dir=os.path.join('data/tensorboard'), 
-                                            histogram_freq=0, 
-                                            write_graph=True, 
-                                            write_images=False)
+        # visualizer = keras.callbacks.TensorBoard(log_dir=os.path.join('data/tensorboard'), 
+        #                                     histogram_freq=0, 
+        #                                     write_graph=True, 
+        #                                     write_images=False)
         
-        model.fit_generator(datagen.flow(train_x, train_y, batch_size=batch_size, shuffle=True),
-                            steps_per_epoch=2000, 
-                            epochs=epochs,
-                            callbacks=[saver, scheduler, visualizer], 
-                            validation_data=evalgen.flow(test_x, test_y, batch_size=batch_size), 
-                            initial_epoch=start_epoch)
+        # model.fit_generator(datagen.flow(train_x, train_y, batch_size=batch_size, shuffle=True),
+        #                     steps_per_epoch=2000, 
+        #                     epochs=epochs,
+        #                     callbacks=[saver, scheduler, visualizer], 
+        #                     validation_data=evalgen.flow(test_x, test_y, batch_size=batch_size), 
+        #                     initial_epoch=start_epoch)
         
+        batch={}
+        count=0
+        errSource=0
+        epoch=0
+        niter=150
+        diplay_iters=200
+        while epoch < niter:
+            _, batch['im'] = next(batch_generator['im'])
+            epoch, batch['label'] = next(batch_generator['label'])
+            
+            batch['label']=batch_label_to_one_hot(batch['label']) # To-do: pre-load labels
+            accuracy, error = model.train_on_batch(batch['im'],batch['label'])
+            errSource+=error
+            #print(errSource)
+            #print(len(errSource))
+            #assert 1==2
+            count+=1
+            if count%diplay_iters==0:
+                print('[%d/%d][%d] Loss: %f Acc: %f' % (epoch, niter, count, errSource/count,accuracy), time.time()-t0)
+                errSource=0
     def train_target_discriminator(self, source_model=None, src_discriminator=None, tgt_discriminator=None, epochs=2000, batch_size=100, save_interval=1, start_epoch=0, num_batches=100):   
     
         (source_x, _), (_,_) = get_dataset('svhn')
@@ -268,13 +337,90 @@ if __name__ == '__main__':
     ap.add_argument('-d', '--eval_target_classifier', default=None, help="Path to target discriminator model to test/evaluate")
     args = ap.parse_args()
     
-    adda = ADDA(args.lr)
+    # ========= Define data sources =====================
+    
+    def load_data(file_pattern):
+
+        def getKey(filename):
+            file_text_name = os.path.splitext(os.path.basename(filename))  #you get the file's text name without extension
+            file_last_num = os.path.basename(file_text_name[0]).split('patches')  #you get three elements, the last one is the number. You want to sort it by this number
+            return int(file_last_num[-1])
+
+        data=glob.glob(file_pattern)
+        data=sorted(data,key=getKey)
+        return data
+        
+    source={'dataset':'para'}
+    target={'dataset':'acre'}
+    path='../wildfire_fcn/src/patch_extract2/patches/'
+    source['mask'] = load_data(path+source['dataset']+"/mask/*.npy")
+    target['mask'] = load_data(path+target['dataset']+"/mask/*.npy")
+
+    source['im'] = load_data(path+source['dataset']+"/im/*.npy")
+    target['im'] = load_data(path+target['dataset']+"/im/*.npy")
+    source['label'] = load_data(path+source['dataset']+"/label/*.npy")
+    target['label'] = load_data(path+target['dataset']+"/label/*.npy")
+
+    print(source['mask'][0:3])
+    print(source['im'][0:3])
+    
+    deb.prints(len(source['mask']))
+    deb.prints(len(source['label']))
+    deb.prints(len(source['im']))
+
+    deb.prints(len(target['mask']))
+    deb.prints(len(target['label']))
+    deb.prints(len(target['im']))
+    
+    def train_test_split_from_mask(masks):
+        ids_train=[]
+        ids_test=[]
+        
+        count=0
+        for _ in masks:
+            mask=np.load(_)
+            if np.all(mask==1):
+                ids_train.append(count)
+            elif np.all(mask==2):
+                ids_test.append(count)
+            count+=1
+        return ids_train, ids_test    
+
+
+    ids_train, ids_test = train_test_split_from_mask(source['mask'])
+    deb.prints(len(ids_train))
+    #deb.prints(ids_train.shape)
+    #deb.prints(ids_train.dtype)
+    #deb.prints(source['im'].shape)
+    source['train']={}
+    source['test']={}
+    source['train']['im']=[source['im'][i] for i in ids_train]
+    source['test']['im']=[source['im'][i] for i in ids_test]
+    source['train']['label']=[source['label'][i] for i in ids_train]
+    source['test']['label']=[source['label'][i] for i in ids_test]
+
+
+    deb.prints(source['train']['label'][0:3])
+    deb.prints(source['train']['im'][0:3])
+    
+    deb.prints(source['test']['label'][0:3])
+    deb.prints(source['test']['im'][0:3])
+    
+    deb.prints(len(source['train']['im']))
+    deb.prints(len(source['test']['im']))
+
+    assert len(source['train']['im']) and len(source['test']['im'])
+
+
+
+    adda = ADDA(args.lr, 128, 6)
     adda.define_source_encoder()
     
     if not args.train_discriminator:
         if args.eval_source_classifier is None:
             model = adda.get_source_classifier(adda.source_encoder, args.source_weights)
-            adda.train_source_model(model, start_epoch=args.start_epoch-1) 
+            adda.train_source_model(model, data=source['train'], \
+                start_epoch=args.start_epoch-1) 
         else:
             model = adda.get_source_classifier(adda.source_encoder, args.eval_source_classifier)
             adda.eval_source_classifier(model, 'mnist')
