@@ -33,7 +33,8 @@ t0 = time.time()
 
 
 def batch_label_to_one_hot(im):
-        class_n=np.unique(im).shape[0]
+        #class_n=np.unique(im).shape[0]
+        class_n=2
         #deb.prints(class_n)
         im_one_hot=np.zeros((im.shape[0],im.shape[1],im.shape[2],class_n))
         #print(im_one_hot.shape)
@@ -379,9 +380,9 @@ if __name__ == '__main__':
         count=0
         for _ in masks:
             mask=np.load(_)
-            if np.all(mask==1):
+            if np.all(mask==2):
                 ids_train.append(count)
-            elif np.all(mask==2):
+            elif np.all(mask==1):
                 ids_test.append(count)
             count+=1
         return ids_train, ids_test    
