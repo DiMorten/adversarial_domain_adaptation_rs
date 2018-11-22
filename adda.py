@@ -59,7 +59,16 @@ def minibatch(data, batchsize):
             epoch+=1        
         rtn = [read_image(data[j]) for j in range(i,i+size)] # Pick a batch
         i+=size
-        tmpsize = yield epoch, np.float32(rtn)   
+        tmpsize = yield epoch, np.float32(rtn) 
+
+def folder_load(paths):
+    files=[]
+    deb.prints(len(paths))
+    for path in paths:
+        #print(path)
+        files.append(np.load(path))
+    return np.asarray(files)
+
 class ADDA():
     def __init__(self, lr, window_len=32, channels=3):
         # Input shape
@@ -362,6 +371,7 @@ if __name__ == '__main__':
     source['label'] = load_data(path+source['dataset']+"/label/*.npy")
     target['label'] = load_data(path+target['dataset']+"/label/*.npy")
 
+
     print(source['mask'][0:3])
     print(source['im'][0:3])
     
@@ -411,6 +421,16 @@ if __name__ == '__main__':
     deb.prints(len(source['test']['im']))
 
     assert len(source['train']['im']) and len(source['test']['im'])
+
+
+
+    source['train']['im']=folder_load(source['train']['im'])
+    source['train']['label']=folder_load(source['train']['label'])
+    source['test']['im']=folder_load(source['test']['im'])
+    source['test']['label']=folder_load(source['test']['label'])
+
+    deb.prints(source['train']['im'].shape)
+    deb.prints(source['train']['label'].shape)
 
 
 
