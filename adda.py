@@ -13,6 +13,7 @@ from keras.utils import np_utils
 import keras.backend as K
 import keras
 from keras.regularizers import l2
+from sklearn.metrics import confusion_matrix,f1_score,accuracy_score,classification_report
 
 import tensorflow as tf
 #from datasets import get_dataset
@@ -29,6 +30,8 @@ import glob
 import cv2
 
 import deb
+from keras_weighted_categorical_crossentropy import weighted_categorical_crossentropy, sparse_accuracy_ignoring_last_label
+
 t0 = time.time()
 
 
@@ -69,8 +72,93 @@ def folder_load(paths):
         files.append(np.load(path))
     return np.asarray(files)
 
+#=============== METRICS CALCULATION ====================#
+def ims_flatten(ims):
+    return np.reshape(ims,(np.prod(ims.shape[0:-1]),ims.shape[-1])).astype(np.float64)
+
+def probabilities_to_one_hot(vals):
+    out=np.zeros_like(vals)
+    out[np.arange(len(vals)), vals.argmax(1)] = 1
+    return out
+def metrics_get(data,ignore_bcknd=True,debug=1): #requires batch['prediction'],batch['label']
+    
+
+    # ==========================IMGS FLATTEN ==========================================#
+    data['prediction_h'] = ims_flatten(data['prediction'])
+    data['prediction_h']=probabilities_to_one_hot(data['prediction_h'])
+            
+    data['label_h'] = ims_flatten(data['label']) #(self.batch['test']['size']*self.patch_len*self.patch_len,self.class_n
+
+
+    if ignore_bcknd==True:
+        data['prediction_h']=data['prediction_h'][:,1:]
+        data['label_h']=data['label_h'][:,1:]
+
+        if debug>0:
+            deb.prints(data['label_h'].shape)
+            deb.prints(data['prediction_h'].shape)
+        #indices_to_keep=data['prediction_h']
+        #data['prediction_h']=data['prediction_h'][:,data['prediction_h']!=0]
+        data['prediction_h']=data['prediction_h'][~np.all(data['label_h'] == 0, axis=1)]
+        data['label_h']=data['label_h'][~np.all(data['label_h'] == 0, axis=1)]
+        
+        #for row in range(0,data['label_h'].shape[0]):
+        #   if np.sum(data['label_h'][row,:])==0:
+        #       np.delete(data['label_h'],row,0)
+        #       np.delete(data['prediction_h'],row,0)
+
+
+    if debug>=1: 
+        deb.prints(data['prediction_h'].dtype)
+        deb.prints(data['label_h'].dtype)
+        deb.prints(data['prediction_h'].shape)
+        deb.prints(data['label_h'].shape)
+        deb.prints(data['label_h'][0])
+        deb.prints(data['prediction_h'][0])
+
+    #============= TEST UNIQUE PRINTING==================#
+    unique,count=np.unique(data['label_h'].argmax(axis=1),return_counts=True)
+    print("Metric real unique+1,count",unique+1,count)
+    unique,count=np.unique(data['prediction_h'].argmax(axis=1),return_counts=True)
+    print("Metric prediction unique+1,count",unique+1,count)
+    
+    #========================METRICS GET================================================#
+    metrics={}
+    metrics['f1_score']=f1_score(data['label_h'],data['prediction_h'],average='macro')
+    metrics['f1_score_weighted']=f1_score(data['label_h'],data['prediction_h'],average='weighted')
+    
+    metrics['overall_acc']=accuracy_score(data['label_h'],data['prediction_h'])
+    metrics['confusion_matrix']=confusion_matrix(data['label_h'].argmax(axis=1),data['prediction_h'].argmax(axis=1))
+    metrics['per_class_acc']=(metrics['confusion_matrix'].astype('float') / metrics['confusion_matrix'].sum(axis=1)[:, np.newaxis]).diagonal()
+    
+    metrics['average_acc']=np.average(metrics['per_class_acc'][~np.isnan(metrics['per_class_acc'])])
+
+def loss_weights_estimate(data,class_n,bcknd_ignore=False):
+        unique,count=np.unique(data['train']['label'].argmax(axis=3),return_counts=True)
+        if bcknd_ignore==True:
+            unique=unique[1:] # No bcknd
+            count=count[1:].astype(np.float32)
+        else:
+            count=count.astype(np.float32)
+        weights_from_unique=np.max(count)/count
+        deb.prints(weights_from_unique)
+        deb.prints(np.max(count))
+        deb.prints(count)
+        deb.prints(unique)
+        loss_weights=np.zeros(class_n)
+        for clss in range(0,class_n): # class 0 is bcknd. Leave it in 0
+            
+            if clss in unique:
+                loss_weights[clss]=weights_from_unique[unique==clss]
+            else:
+                loss_weights[clss]=0
+        deb.prints(loss_weights)
+
+        #loss_weights[1:]=1
+        deb.prints(loss_weights.shape)
+        return loss_weights
 class ADDA():
-    def __init__(self, lr, window_len=32, channels=3):
+    def __init__(self, lr, window_len=32, channels=3, class_n=2):
         # Input shape
         self.img_rows = window_len
         self.img_cols = window_len
@@ -84,7 +172,7 @@ class ADDA():
         self.discriminator_decay_factor = 0.5
         self.src_optimizer = Adam(lr, 0.5)
         self.tgt_optimizer = Adam(lr, 0.5)
-        
+        self.class_n=class_n
     def define_source_encoder(self, weights=None):
     
         #self.source_encoder = keras.applications.vgg16.VGG16(include_top=False, weights='imagenet', input_shape=self.img_shape, pooling=None, classes=10)
@@ -121,10 +209,10 @@ class ADDA():
             self.target_encoder.load_weights(weights, by_name=True)
         
     def get_source_classifier(self, model, weights=None):
-        nb_classes=2
+        #nb_classes=2
         weight_decay=1E-4
 
-        x = Conv2D(nb_classes, (1, 1), activation='softmax', padding='same', kernel_regularizer=l2(weight_decay),
+        x = Conv2D(self.class_n, (1, 1), activation='softmax', padding='same', kernel_regularizer=l2(weight_decay),
                           use_bias=False)(model.output)
 
         source_classifier_model = Model(inputs=(model.input), outputs=(x))
@@ -186,12 +274,13 @@ class ADDA():
         
         # Define source data generator
         batch_generator={}
-        batch_generator['im']=minibatch(data['im'], batch_size)
+        batch_generator['in']=minibatch(data['in'], batch_size)
         batch_generator['label']=minibatch(data['label'], batch_size)
 
 
-
-        model.compile(loss='categorical_crossentropy', optimizer=self.src_optimizer, metrics=['accuracy'])
+        loss_weighted=weighted_categorical_crossentropy(data['loss_weights'])
+        #model.compile(loss='categorical_crossentropy', optimizer=self.src_optimizer, metrics=['accuracy'])
+        model.compile(loss=loss_weighted, optimizer=self.src_optimizer, metrics=['accuracy'])
         
         if not os.path.isdir('data'):
             os.mkdir('data')
@@ -227,20 +316,83 @@ class ADDA():
         epoch=0
         niter=150
         diplay_iters=200
-        while epoch < niter:
-            _, batch['im'] = next(batch_generator['im'])
-            epoch, batch['label'] = next(batch_generator['label'])
+
+        batch = {'train': {}, 'test': {}}
+        self.batch={'train':{},'test':{}}
+        self.metrics={'train':{},'test':{}}
+        self.batch['train']['size']=batch_size
+        self.batch['test']['size']=batch_size
+        
+        self.batch['train']['n'] = data['train']['in'].shape[0] // self.batch['train']['size']
+        self.batch['test']['n'] = data['test']['in'].shape[0] // self.batch['test']['size']
+
+        deb.prints(self.batch['train']['n'])
+        deb.prints(self.batch['test']['n'])
+        for epoch in range(niter):
+
+            self.metrics['train']['loss'] = np.zeros((1, 2))
+            self.metrics['test']['loss'] = np.zeros((1, 2))
+
+            #=============================TRAIN LOOP=========================================#
+            for batch_id in range(0, self.batch['train']['n']):
+                
+                idx0 = batch_id*self.batch['train']['size']
+                idx1 = (batch_id+1)*self.batch['train']['size']
+
+                batch['train']['in'] = data['train']['in'][idx0:idx1]
+                batch['train']['label'] = data['train']['label'][idx0:idx1]
+
+                self.metrics['train']['loss'] += model.train_on_batch(
+                    batch['train']['in'], batch['train']['label'])      # Accumulated epoch
+
+            # Average epoch loss
+            self.metrics['train']['loss'] /= self.batch['train']['n']
+
+            print(self.metrics['train']['loss'])
+
+
+            #==========================TEST LOOP================================================#
+            data['test']['prediction']=np.zeros_like(data['test']['label'])
+            self.batch_test_stats=True
+
+            for batch_id in range(0, self.batch['test']['n']):
+                idx0 = batch_id*self.batch['test']['size']
+                idx1 = (batch_id+1)*self.batch['test']['size']
+
+                batch['test']['in'] = data['test']['in'][idx0:idx1]
+                batch['test']['label'] = data['test']['label'][idx0:idx1]
+
+                if self.batch_test_stats:
+                    self.metrics['test']['loss'] += model.test_on_batch(
+                        batch['test']['in'], batch['test']['label'])        # Accumulated epoch
+
+                data['test']['prediction'][idx0:idx1]=model.predict(batch['test']['in'],batch_size=self.batch['test']['size'])
+
+            #====================METRICS GET================================================#
+            deb.prints(data['test']['label'].shape)     
+            deb.prints(idx1)
+            print("Epoch={}".format(epoch)) 
             
-            batch['label']=batch_label_to_one_hot(batch['label']) # To-do: pre-load labels
-            accuracy, error = model.train_on_batch(batch['im'],batch['label'])
-            errSource+=error
-            #print(errSource)
-            #print(len(errSource))
-            #assert 1==2
-            count+=1
-            if count%diplay_iters==0:
-                print('[%d/%d][%d] Loss: %f Acc: %f' % (epoch, niter, count, errSource/count,accuracy), time.time()-t0)
-                errSource=0
+            # Average epoch loss
+            self.metrics['test']['loss'] /= self.batch['test']['n']
+            
+            metrics=metrics_get(data['test'],debug=1)
+
+            
+        # while epoch < niter:
+        #     _, batch['in'] = next(batch_generator['in'])
+        #     epoch, batch['label'] = next(batch_generator['label'])
+            
+        #     batch['label']=batch_label_to_one_hot(batch['label']) # To-do: pre-load labels
+        #     accuracy, error = model.train_on_batch(batch['in'],batch['label'])
+        #     errSource+=error
+        #     #print(errSource)
+        #     #print(len(errSource))
+        #     #assert 1==2
+        #     count+=1
+        #     if count%diplay_iters==0:
+        #         print('[%d/%d][%d] Loss: %f Acc: %f' % (epoch, niter, count, errSource/count,accuracy), time.time()-t0)
+        #         errSource=0
     def train_target_discriminator(self, source_model=None, src_discriminator=None, tgt_discriminator=None, epochs=2000, batch_size=100, save_interval=1, start_epoch=0, num_batches=100):   
     
         (source_x, _), (_,_) = get_dataset('svhn')
@@ -366,22 +518,22 @@ if __name__ == '__main__':
     source['mask'] = load_data(path+source['dataset']+"/mask/*.npy")
     target['mask'] = load_data(path+target['dataset']+"/mask/*.npy")
 
-    source['im'] = load_data(path+source['dataset']+"/im/*.npy")
-    target['im'] = load_data(path+target['dataset']+"/im/*.npy")
+    source['in'] = load_data(path+source['dataset']+"/im/*.npy")
+    target['in'] = load_data(path+target['dataset']+"/im/*.npy")
     source['label'] = load_data(path+source['dataset']+"/label/*.npy")
     target['label'] = load_data(path+target['dataset']+"/label/*.npy")
 
 
     print(source['mask'][0:3])
-    print(source['im'][0:3])
+    print(source['in'][0:3])
     
     deb.prints(len(source['mask']))
     deb.prints(len(source['label']))
-    deb.prints(len(source['im']))
+    deb.prints(len(source['in']))
 
     deb.prints(len(target['mask']))
     deb.prints(len(target['label']))
-    deb.prints(len(target['im']))
+    deb.prints(len(target['in']))
     
     def train_test_split_from_mask(masks):
         ids_train=[]
@@ -390,9 +542,9 @@ if __name__ == '__main__':
         count=0
         for _ in masks:
             mask=np.load(_)
-            if np.all(mask==2):
+            if np.all(mask==1):
                 ids_train.append(count)
-            elif np.all(mask==1):
+            elif np.all(mask==2):
                 ids_test.append(count)
             count+=1
         return ids_train, ids_test    
@@ -402,45 +554,52 @@ if __name__ == '__main__':
     deb.prints(len(ids_train))
     #deb.prints(ids_train.shape)
     #deb.prints(ids_train.dtype)
-    #deb.prints(source['im'].shape)
+    #deb.prints(source['in'].shape)
     source['train']={}
     source['test']={}
-    source['train']['im']=[source['im'][i] for i in ids_train]
-    source['test']['im']=[source['im'][i] for i in ids_test]
+    source['train']['in']=[source['in'][i] for i in ids_train]
+    source['test']['in']=[source['in'][i] for i in ids_test]
     source['train']['label']=[source['label'][i] for i in ids_train]
     source['test']['label']=[source['label'][i] for i in ids_test]
 
 
     deb.prints(source['train']['label'][0:3])
-    deb.prints(source['train']['im'][0:3])
+    deb.prints(source['train']['in'][0:3])
     
     deb.prints(source['test']['label'][0:3])
-    deb.prints(source['test']['im'][0:3])
+    deb.prints(source['test']['in'][0:3])
     
-    deb.prints(len(source['train']['im']))
-    deb.prints(len(source['test']['im']))
+    deb.prints(len(source['train']['in']))
+    deb.prints(len(source['test']['in']))
 
-    assert len(source['train']['im']) and len(source['test']['im'])
+    assert len(source['train']['in']) and len(source['test']['in'])
 
 
 
-    source['train']['im']=folder_load(source['train']['im'])
+    source['train']['in']=folder_load(source['train']['in'])
     source['train']['label']=folder_load(source['train']['label'])
-    source['test']['im']=folder_load(source['test']['im'])
+    source['test']['in']=folder_load(source['test']['in'])
     source['test']['label']=folder_load(source['test']['label'])
 
-    deb.prints(source['train']['im'].shape)
+    deb.prints(source['train']['in'].shape)
     deb.prints(source['train']['label'].shape)
 
 
+    deb.prints(np.unique(source['train']['label'],return_counts=True))
 
-    adda = ADDA(args.lr, 128, 6)
+    
+    source['train']['label']=batch_label_to_one_hot(source['train']['label'])
+    source['test']['label']=batch_label_to_one_hot(source['test']['label'])
+    deb.prints(source['train']['label'].shape)
+    source['loss_weights']=loss_weights_estimate(source,bcknd_ignore=False,class_n=2)
+    
+    adda = ADDA(args.lr, 128, 6,class_n=2)
     adda.define_source_encoder()
     
     if not args.train_discriminator:
         if args.eval_source_classifier is None:
             model = adda.get_source_classifier(adda.source_encoder, args.source_weights)
-            adda.train_source_model(model, data=source['train'], \
+            adda.train_source_model(model, data=source, \
                 start_epoch=args.start_epoch-1) 
         else:
             model = adda.get_source_classifier(adda.source_encoder, args.eval_source_classifier)
