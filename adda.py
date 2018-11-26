@@ -33,11 +33,10 @@ import deb
 from keras_weighted_categorical_crossentropy import weighted_categorical_crossentropy, sparse_accuracy_ignoring_last_label
 
 t0 = time.time()
+class_n=3
 
-
-def batch_label_to_one_hot(im):
+def batch_label_to_one_hot(im,class_n=3):
         #class_n=np.unique(im).shape[0]
-        class_n=2
         #deb.prints(class_n)
         im_one_hot=np.zeros((im.shape[0],im.shape[1],im.shape[2],class_n))
         #print(im_one_hot.shape)
@@ -74,7 +73,7 @@ def folder_load(paths):
 
 #=============== METRICS CALCULATION ====================#
 def ims_flatten(ims):
-    return np.reshape(ims,(np.prod(ims.shape[0:-1]),ims.shape[-1])).astype(np.float64)
+    return np.reshape(ims,(np.prod(ims.shape[0:-1]),ims.shape[-1])).astype(np.float32)
 
 def probabilities_to_one_hot(vals):
     out=np.zeros_like(vals)
@@ -84,56 +83,53 @@ def metrics_get(data,ignore_bcknd=True,debug=1): #requires batch['prediction'],b
     
 
     # ==========================IMGS FLATTEN ==========================================#
-    data['prediction_h'] = ims_flatten(data['prediction'])
-    data['prediction_h']=probabilities_to_one_hot(data['prediction_h'])
-            
-    data['label_h'] = ims_flatten(data['label']) #(self.batch['test']['size']*self.patch_len*self.patch_len,self.class_n
+    predictions = ims_flatten(data['prediction'])
+    predictions=probabilities_to_one_hot(predictions)
+    labels = ims_flatten(data['label']) #(self.batch['test']['size']*self.patch_len*self.patch_len,self.class_n
 
+    deb.prints(predictions.shape)
+    predictions = predictions.argmax(axis=1)
+    labels = labels.argmax(axis=1)
+    
+    deb.prints(np.unique(labels,return_counts=True))   
 
     if ignore_bcknd==True:
-        data['prediction_h']=data['prediction_h'][:,1:]
-        data['label_h']=data['label_h'][:,1:]
+        predictions=predictions[labels>0]
+        labels=labels[labels>0]
 
-        if debug>0:
-            deb.prints(data['label_h'].shape)
-            deb.prints(data['prediction_h'].shape)
-        #indices_to_keep=data['prediction_h']
-        #data['prediction_h']=data['prediction_h'][:,data['prediction_h']!=0]
-        data['prediction_h']=data['prediction_h'][~np.all(data['label_h'] == 0, axis=1)]
-        data['label_h']=data['label_h'][~np.all(data['label_h'] == 0, axis=1)]
-        
-        #for row in range(0,data['label_h'].shape[0]):
-        #   if np.sum(data['label_h'][row,:])==0:
-        #       np.delete(data['label_h'],row,0)
-        #       np.delete(data['prediction_h'],row,0)
+    deb.prints(np.unique(labels,return_counts=True))   
 
+    print("predictions",predictions.shape)
 
-    if debug>=1: 
-        deb.prints(data['prediction_h'].dtype)
-        deb.prints(data['label_h'].dtype)
-        deb.prints(data['prediction_h'].shape)
-        deb.prints(data['label_h'].shape)
-        deb.prints(data['label_h'][0])
-        deb.prints(data['prediction_h'][0])
+    print(np.unique(predictions,return_counts=True))
+    print(np.unique(labels,return_counts=True))
 
-    #============= TEST UNIQUE PRINTING==================#
-    unique,count=np.unique(data['label_h'].argmax(axis=1),return_counts=True)
-    print("Metric real unique+1,count",unique+1,count)
-    unique,count=np.unique(data['prediction_h'].argmax(axis=1),return_counts=True)
-    print("Metric prediction unique+1,count",unique+1,count)
-    
-    #========================METRICS GET================================================#
+    print(predictions.shape,predictions.dtype)
+    print(labels.shape,labels.dtype)
+
     metrics={}
-    metrics['f1_score']=f1_score(data['label_h'],data['prediction_h'],average='macro')
-    metrics['f1_score_weighted']=f1_score(data['label_h'],data['prediction_h'],average='weighted')
-    
-    metrics['overall_acc']=accuracy_score(data['label_h'],data['prediction_h'])
-    metrics['confusion_matrix']=confusion_matrix(data['label_h'].argmax(axis=1),data['prediction_h'].argmax(axis=1))
-    metrics['per_class_acc']=(metrics['confusion_matrix'].astype('float') / metrics['confusion_matrix'].sum(axis=1)[:, np.newaxis]).diagonal()
-    
-    metrics['average_acc']=np.average(metrics['per_class_acc'][~np.isnan(metrics['per_class_acc'])])
+    metrics['f1_score']=f1_score(labels,predictions,average='macro')
+    metrics['f1_score_weighted']=f1_score(labels,predictions,average='weighted')
+            
+    metrics['overall_acc']=accuracy_score(labels,predictions)
+    confusion_matrix_=confusion_matrix(labels,predictions)
+    metrics['per_class_acc']=(confusion_matrix_.astype('float') / confusion_matrix_.sum(axis=1)[:, np.newaxis]).diagonal()
+    print("acc",metrics['per_class_acc'])
 
-def loss_weights_estimate(data,class_n,bcknd_ignore=False):
+    print(confusion_matrix_.sum(axis=1)[:, np.newaxis].diagonal())
+    print(confusion_matrix_.diagonal())
+    print(np.sum(confusion_matrix_,axis=1))
+    acc=confusion_matrix_.diagonal()/np.sum(confusion_matrix_,axis=1)
+    acc=acc[~np.isnan(acc)]
+    print("Acc",acc)
+    print("AA",np.average(acc))
+    print("OA",np.sum(confusion_matrix_.diagonal())/np.sum(confusion_matrix_))
+    print(confusion_matrix_)
+
+
+
+
+def loss_weights_estimate(data,class_n,bcknd_ignore=True):
         unique,count=np.unique(data['train']['label'].argmax(axis=3),return_counts=True)
         if bcknd_ignore==True:
             unique=unique[1:] # No bcknd
@@ -158,7 +154,7 @@ def loss_weights_estimate(data,class_n,bcknd_ignore=False):
         deb.prints(loss_weights.shape)
         return loss_weights
 class ADDA():
-    def __init__(self, lr, window_len=32, channels=3, class_n=2):
+    def __init__(self, lr, window_len=32, channels=3, class_n=3):
         # Input shape
         self.img_rows = window_len
         self.img_cols = window_len
@@ -273,9 +269,9 @@ class ADDA():
 
         
         # Define source data generator
-        batch_generator={}
-        batch_generator['in']=minibatch(data['in'], batch_size)
-        batch_generator['label']=minibatch(data['label'], batch_size)
+        #batch_generator={}
+        #batch_generator['in']=minibatch(data['in'], batch_size)
+        #batch_generator['label']=minibatch(data['label'], batch_size)
 
 
         loss_weighted=weighted_categorical_crossentropy(data['loss_weights'])
@@ -514,86 +510,104 @@ if __name__ == '__main__':
         
     source={'dataset':'para'}
     target={'dataset':'acre'}
-    path='../wildfire_fcn/src/patch_extract2/patches/'
-    source['mask'] = load_data(path+source['dataset']+"/mask/*.npy")
-    target['mask'] = load_data(path+target['dataset']+"/mask/*.npy")
 
-    source['in'] = load_data(path+source['dataset']+"/im/*.npy")
-    target['in'] = load_data(path+target['dataset']+"/im/*.npy")
-    source['label'] = load_data(path+source['dataset']+"/label/*.npy")
-    target['label'] = load_data(path+target['dataset']+"/label/*.npy")
+    load_mode=2
+    if load_mode==1:
+        path='../wildfire_fcn/src/patch_extract2/patches/'
+        source['mask'] = load_data(path+source['dataset']+"/mask/*.npy")
+        target['mask'] = load_data(path+target['dataset']+"/mask/*.npy")
+
+        source['in'] = load_data(path+source['dataset']+"/im/*.npy")
+        target['in'] = load_data(path+target['dataset']+"/im/*.npy")
+        source['label'] = load_data(path+source['dataset']+"/label/*.npy")
+        target['label'] = load_data(path+target['dataset']+"/label/*.npy")
 
 
-    print(source['mask'][0:3])
-    print(source['in'][0:3])
-    
-    deb.prints(len(source['mask']))
-    deb.prints(len(source['label']))
-    deb.prints(len(source['in']))
-
-    deb.prints(len(target['mask']))
-    deb.prints(len(target['label']))
-    deb.prints(len(target['in']))
-    
-    def train_test_split_from_mask(masks):
-        ids_train=[]
-        ids_test=[]
+        print(source['mask'][0:3])
+        print(source['in'][0:3])
         
-        count=0
-        for _ in masks:
-            mask=np.load(_)
-            if np.all(mask==1):
-                ids_train.append(count)
-            elif np.all(mask==2):
-                ids_test.append(count)
-            count+=1
-        return ids_train, ids_test    
+        deb.prints(len(source['mask']))
+        deb.prints(len(source['label']))
+        deb.prints(len(source['in']))
+
+        deb.prints(len(target['mask']))
+        deb.prints(len(target['label']))
+        deb.prints(len(target['in']))
+        
+        def train_test_split_from_mask(masks):
+            ids_train=[]
+            ids_test=[]
+            
+            count=0
+            for _ in masks:
+                mask=np.load(_)
+                if np.all(mask==1):
+                    ids_train.append(count)
+                elif np.all(mask==2):
+                    ids_test.append(count)
+                count+=1
+            return ids_train, ids_test    
 
 
-    ids_train, ids_test = train_test_split_from_mask(source['mask'])
-    deb.prints(len(ids_train))
-    #deb.prints(ids_train.shape)
-    #deb.prints(ids_train.dtype)
-    #deb.prints(source['in'].shape)
-    source['train']={}
-    source['test']={}
-    source['train']['in']=[source['in'][i] for i in ids_train]
-    source['test']['in']=[source['in'][i] for i in ids_test]
-    source['train']['label']=[source['label'][i] for i in ids_train]
-    source['test']['label']=[source['label'][i] for i in ids_test]
+        ids_train, ids_test = train_test_split_from_mask(source['mask'])
+        deb.prints(len(ids_train))
+        #deb.prints(ids_train.shape)
+        #deb.prints(ids_train.dtype)
+        #deb.prints(source['in'].shape)
+        source['train']={}
+        source['test']={}
+        source['train']['in']=[source['in'][i] for i in ids_train]
+        source['test']['in']=[source['in'][i] for i in ids_test]
+        source['train']['label']=[source['label'][i] for i in ids_train]
+        source['test']['label']=[source['label'][i] for i in ids_test]
 
 
-    deb.prints(source['train']['label'][0:3])
-    deb.prints(source['train']['in'][0:3])
-    
-    deb.prints(source['test']['label'][0:3])
-    deb.prints(source['test']['in'][0:3])
-    
-    deb.prints(len(source['train']['in']))
-    deb.prints(len(source['test']['in']))
+        deb.prints(source['train']['label'][0:3])
+        deb.prints(source['train']['in'][0:3])
+        
+        deb.prints(source['test']['label'][0:3])
+        deb.prints(source['test']['in'][0:3])
+        
+        deb.prints(len(source['train']['in']))
+        deb.prints(len(source['test']['in']))
 
-    assert len(source['train']['in']) and len(source['test']['in'])
+        assert len(source['train']['in']) and len(source['test']['in'])
 
 
 
-    source['train']['in']=folder_load(source['train']['in'])
-    source['train']['label']=folder_load(source['train']['label'])
-    source['test']['in']=folder_load(source['test']['in'])
-    source['test']['label']=folder_load(source['test']['label'])
+        source['train']['in']=folder_load(source['train']['in'])
+        source['train']['label']=folder_load(source['train']['label'])
+        source['test']['in']=folder_load(source['test']['in'])
+        source['test']['label']=folder_load(source['test']['label'])
+
+    else:
+        source_dataset='para'
+        path='../wildfire_fcn/src/patch_extract2/compact/'+source_dataset+'/'
+        source['train']={}
+        source['test']={}
+        source['train']['in']=np.load(path+"train_im.npy")
+        source['train']['label']=np.load(path+"train_label.npy")
+        source['test']['in']=np.load(path+"test_im.npy")
+        source['test']['label']=np.load(path+"test_label.npy")
+
+
 
     deb.prints(source['train']['in'].shape)
     deb.prints(source['train']['label'].shape)
 
 
     deb.prints(np.unique(source['train']['label'],return_counts=True))
+    deb.prints(np.unique(source['test']['label'],return_counts=True))
 
     
-    source['train']['label']=batch_label_to_one_hot(source['train']['label'])
-    source['test']['label']=batch_label_to_one_hot(source['test']['label'])
+    source['train']['label']=batch_label_to_one_hot(source['train']['label'],class_n=class_n)
+    source['test']['label']=batch_label_to_one_hot(source['test']['label'],class_n=class_n)
     deb.prints(source['train']['label'].shape)
-    source['loss_weights']=loss_weights_estimate(source,bcknd_ignore=False,class_n=2)
+
+
+    source['loss_weights']=loss_weights_estimate(source,bcknd_ignore=True,class_n=class_n)
     
-    adda = ADDA(args.lr, 128, 6,class_n=2)
+    adda = ADDA(args.lr, 32, 6,class_n=class_n)
     adda.define_source_encoder()
     
     if not args.train_discriminator:
