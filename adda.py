@@ -48,6 +48,9 @@ def G(fn_generate, X):
     r = np.array([fn_generate([X[i:i+1]]) for i in range(X.shape[0])])
     #return r.swapaxes(0,1)[:,:,0] 
     return r 
+
+def stats_print(x):
+	print(np.min(x),np.max(x),np.average(x),x.dtype)
 def domain_data_load(domain):
 
 	path='../wildfire_fcn/src/patch_extract2/compact/'+domain['dataset']+'/'
@@ -493,7 +496,7 @@ class ADDA():
 		if source_weights is not None:
 			source['encoder'].load_weights(source_weights,by_name=True)
 			classifier.load_weights(source_weights,by_name=True)
-			#target['encoder'].load_weights(source_weights,by_name=True)	
+			target['encoder'].load_weights(source_weights,by_name=True)	
 		
 		if use_lsgan:
 			loss_fn = lambda output, target : K.mean(K.abs(K.square(output-target)))
