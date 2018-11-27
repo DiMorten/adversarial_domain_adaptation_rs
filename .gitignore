@@ -56,3 +56,27 @@ docs/_build/
 
 # PyBuilder
 target/
+
+*.png
+*.jpg
+*.tif*
+data/
+original_dataset/
+*.pyc
+*.npy
+*.aux.xml*
+
+*ckpt*
+checkpoint
+*.pkl
+*.pickle
+*results*
+src/repeat_results.pickle
+*.tmp*
+*repeat_results.pickle
+*.directory
+
+*.joblib
+*.h5
+*.kate-swp
+*.mat
