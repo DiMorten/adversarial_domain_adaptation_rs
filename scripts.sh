@@ -11,6 +11,9 @@ python adda.py -t=True -s="results/source_weights_para.h5" -sds "para"
 # Eval source model on target (acre)
 python adda.py -t=True -s="results/source_weights_para.h5" -sds "acre"
 
+
+# Domain training (No source classif. training involed)
+python adda.py -f -s="results/source_weights_para.h5" -sds "para" -tds="acre"
 # =========== Acre as source =======================================
 
 

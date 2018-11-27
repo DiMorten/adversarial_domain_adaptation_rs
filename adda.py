@@ -35,6 +35,30 @@ from keras_weighted_categorical_crossentropy import weighted_categorical_crossen
 t0 = time.time()
 class_n=3
 
+def domain_data_load(domain):
+
+	path='../wildfire_fcn/src/patch_extract2/compact/'+domain['dataset']+'/'
+	domain['train']={}
+	domain['test']={}
+	domain['train']['in']=np.load(path+"train_im.npy")
+	domain['train']['label']=np.load(path+"train_label.npy")
+	domain['test']['in']=np.load(path+"test_im.npy")
+	domain['test']['label']=np.load(path+"test_label.npy")
+	deb.prints(domain['train']['in'].shape)
+	deb.prints(domain['train']['label'].shape)
+
+
+	deb.prints(np.unique(domain['train']['label'],return_counts=True))
+	deb.prints(np.unique(domain['test']['label'],return_counts=True))
+
+	
+	domain['train']['label']=batch_label_to_one_hot(domain['train']['label'],class_n=class_n)
+	domain['test']['label']=batch_label_to_one_hot(domain['test']['label'],class_n=class_n)
+	deb.prints(domain['train']['label'].shape)
+
+
+	domain['loss_weights']=loss_weights_estimate(domain,bcknd_ignore=True,class_n=class_n)
+	return domain
 def batch_label_to_one_hot(im,class_n=3):
 		#class_n=np.unique(im).shape[0]
 		#deb.prints(class_n)
@@ -180,7 +204,8 @@ class ADDA():
 		x = Conv2D(64, kernel_size=(3, 3), activation='relu', padding='same')(x)
 		#x = MaxPooling2D(pool_size=(2, 2))(x)
 		#x = Conv2D(256, kernel_size=(3, 3), activation='relu', padding='same')(x)
-		x = Conv2D(128, kernel_size=(3, 3), activation='relu', padding='same')(x)
+		x = Conv2D(128, kernel_size=(3, 3), activation='relu', padding='same', \
+			name="encoder_tail")(x)
 		#x = Conv2D(64, kernel_size=(3, 3), activation='relu', padding='same')(x)
 		#x = MaxPooling2D(pool_size=(2, 2))(x)
 		#x = Conv2D(128, kernel_size=(3, 3), activation='relu', input_shape=self.img_shape, padding='same')(inp)
@@ -217,7 +242,7 @@ class ADDA():
 		if weights is not None:
 			print("Loading source weights")
 			source_classifier_model.load_weights(weights)
-		
+		print(source_classifier_model.summary())
 		return source_classifier_model
 
 	def define_discriminator(self, shape):
@@ -229,8 +254,8 @@ class ADDA():
 		x = Dense(2, activation='sigmoid', name='discriminator2')(x)
 		
 		self.disc_flag = True
-		self.discriminator_model = Model(inputs=(inp), outputs=(x), name='discriminator')
-	
+		discriminator = Model(inputs=(inp), outputs=(x), name='discriminator')
+		return discriminator
 	def tensorboard_log(self, callback, names, logs, batch_no):
 		
 		for name, value in zip(names, logs):
@@ -253,22 +278,8 @@ class ADDA():
 		
 		return disc
 
-	def train_source_model(self, model, data, batch_size=6, epochs=2000, \
+	def source_model_train(self, model, data, batch_size=6, epochs=2000, \
 		save_interval=1, start_epoch=0,training=True):
-
-		# (train_x, train_y), (test_x, test_y) = get_dataset('svhn')
-		
-		# datagen = ImageDataGenerator(data_format='channels_last', 
-		#                         rescale=1./255, 
-		#                         rotation_range=40, 
-		#                         width_shift_range=0.2, 
-		#                         height_shift_range=0.2)
-	   
-		# evalgen = ImageDataGenerator(data_format='channels_last', 
-		#                         rescale=1./255)
-			
-
-		# Generator fcn. Increases epoc/shuffles data 
 
 		
 		# Define source data generator
@@ -301,12 +312,6 @@ class ADDA():
 		#                                     write_graph=True, 
 		#                                     write_images=False)
 		
-		# model.fit_generator(datagen.flow(train_x, train_y, batch_size=batch_size, shuffle=True),
-		#                     steps_per_epoch=2000, 
-		#                     epochs=epochs,
-		#                     callbacks=[saver, scheduler, visualizer], 
-		#                     validation_data=evalgen.flow(test_x, test_y, batch_size=batch_size), 
-		#                     initial_epoch=start_epoch)
 		
 		batch={}
 		count=0
@@ -388,44 +393,34 @@ class ADDA():
 			metrics=metrics_get(data['test'],debug=1)
 
 			
-		# while epoch < niter:
-		#     _, batch['in'] = next(batch_generator['in'])
-		#     epoch, batch['label'] = next(batch_generator['label'])
-			
-		#     batch['label']=batch_label_to_one_hot(batch['label']) # To-do: pre-load labels
-		#     accuracy, error = model.train_on_batch(batch['in'],batch['label'])
-		#     errSource+=error
-		#     #print(errSource)
-		#     #print(len(errSource))
-		#     #assert 1==2
-		#     count+=1
-		#     if count%diplay_iters==0:
-		#         print('[%d/%d][%d] Loss: %f Acc: %f' % (epoch, niter, count, errSource/count,accuracy), time.time()-t0)
-		#         errSource=0
-	def train_target_discriminator(self, source_model=None, src_discriminator=None, tgt_discriminator=None, epochs=2000, batch_size=100, save_interval=1, start_epoch=0, num_batches=100):   
-	
-		(source_x, _), (_,_) = get_dataset('svhn')
+	def discriminator_train(self, source,target, source_model=None, src_discriminator=None, tgt_discriminator=None, epochs=2000, batch_size=100, save_interval=1, start_epoch=0, num_batches=100):   
 		
-		src_datagen = ImageDataGenerator(data_format='channels_last', 
-								rescale=1./255, 
-								rotation_range=40, 
-								width_shift_range=0.2, 
-								height_shift_range=0.2)
+		# Source weights were already loaded		
+		source['encoder'] = Model(inputs=source_model.input,
+                                 outputs=source_model.get_layer("encoder_tail").output)
 		
-		(target_x, _), (_,_) = get_dataset('mnist')
-		
-		tgt_datagen = ImageDataGenerator(data_format='channels_last', 
-								rescale=1./255, 
-								rotation_range=40, 
-								width_shift_range=0.2, 
-								height_shift_range=0.2)
-		
-		self.define_source_encoder(source_model)
-				
-		for layer in self.source_encoder.layers:
+		# Did we clone the source weights also? Otherwise, clone the source model
+		# first, load weights and then crop both models into their encoders
+		target['encoder'] = clone_model(source['encoder'])
+
+		for layer in source['encoder'].layers:
 			layer.trainable = False
+
+		#discriminator = self.get_discriminator(self.source_encoder, src_discriminator)
 		
-		source_discriminator = self.get_discriminator(self.source_encoder, src_discriminator)
+		discriminator_model=self.define_discriminator(source['encoder'].output_shape[1:]) # 
+		source['model'] = Model(inputs=(source['encoder'].input), 
+			outputs=(discriminator_model(source['encoder'].output)))
+				
+		target['model'] = Model(inputs=(target['encoder'].input), 
+			outputs=(discriminator_model(target['encoder'].output)))
+		
+
+		#if weights is not None:
+		#	disc.load_weights(weights, by_name=True)
+
+		
+		
 		target_discriminator = self.get_discriminator(self.target_encoder, tgt_discriminator)
 		
 		if src_discriminator is not None:
@@ -532,8 +527,7 @@ if __name__ == '__main__':
 	ap.add_argument('-n', '--discriminator_epochs', type=int, default=10000, help="Max number of steps to train discriminator")
 	ap.add_argument('-l', '--lr', type=float, default=0.0001, help="Initial Learning Rate")
 	ap.add_argument('-f', '--train_discriminator', action='store_true', help="Train discriminator model (if TRUE) vs Train source classifier")
-	ap.add_argument('-a', '--source_discriminator_weights', help="Path to weights file to load source discriminator")
-	ap.add_argument('-b', '--target_discriminator_weights', help="Path to weights file to load target discriminator")
+	ap.add_argument('-a', '--discriminator_weights', help="Path to weights file to load discriminator")
 	ap.add_argument('-t', '--eval_source_classifier', default=None, help="Path to source classifier model to test/evaluate")
 	ap.add_argument('-d', '--eval_target_classifier', default=None, help="Path to target discriminator model to test/evaluate")
 	ap.add_argument('-sds', '--source_dataset', default="para", help="Path to source dataset")
@@ -628,30 +622,12 @@ if __name__ == '__main__':
 
 	else:
 		
-		path='../wildfire_fcn/src/patch_extract2/compact/'+source['dataset']+'/'
-		source['train']={}
-		source['test']={}
-		source['train']['in']=np.load(path+"train_im.npy")
-		source['train']['label']=np.load(path+"train_label.npy")
-		source['test']['in']=np.load(path+"test_im.npy")
-		source['test']['label']=np.load(path+"test_label.npy")
+		source=domain_data_load({"dataset":args.source_dataset})
+		target=domain_data_load({"dataset":args.target_dataset})
+				
 
 
 
-	deb.prints(source['train']['in'].shape)
-	deb.prints(source['train']['label'].shape)
-
-
-	deb.prints(np.unique(source['train']['label'],return_counts=True))
-	deb.prints(np.unique(source['test']['label'],return_counts=True))
-
-	
-	source['train']['label']=batch_label_to_one_hot(source['train']['label'],class_n=class_n)
-	source['test']['label']=batch_label_to_one_hot(source['test']['label'],class_n=class_n)
-	deb.prints(source['train']['label'].shape)
-
-
-	source['loss_weights']=loss_weights_estimate(source,bcknd_ignore=True,class_n=class_n)
 	
 	adda = ADDA(args.lr, 32, 6,class_n=class_n)
 	adda.define_source_encoder()
@@ -662,19 +638,19 @@ if __name__ == '__main__':
 	if not args.train_discriminator:
 
 		if args.eval_source_classifier is None:
-			adda.train_source_model(source_model, data=source, \
+			adda.source_model_train(source_model, data=source, \
 				start_epoch=args.start_epoch-1) 
 		else:
-			adda.train_source_model(source_model, data=source, training=False, \
+			adda.source_model_train(source_model, data=source, training=False, \
 				start_epoch=args.start_epoch-1)
 			
 	adda.define_target_encoder(args.source_weights)
 	
 	if args.train_discriminator:
-		adda.train_target_discriminator(epochs=args.discriminator_epochs, 
-										source_model=args.source_weights, 
-										src_discriminator=args.source_discriminator_weights, 
-										tgt_discriminator=args.target_discriminator_weights,
+		adda.discriminator_train(epochs=args.discriminator_epochs, 
+										source_model=source_model, 
+										source=source, target=target, 
+										discriminator=args.discriminator_weights, 
 										start_epoch=args.start_epoch-1)
 	if args.eval_target_classifier is not None:
 		adda.eval_target_classifier(args.eval_source_classifier, args.eval_target_classifier)
