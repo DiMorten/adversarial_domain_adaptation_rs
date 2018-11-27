@@ -31,10 +31,19 @@ import cv2
 
 import deb
 from keras_weighted_categorical_crossentropy import weighted_categorical_crossentropy, sparse_accuracy_ignoring_last_label
+from keras.initializers import RandomNormal
 
 t0 = time.time()
 class_n=3
 
+conv_init = RandomNormal(0, 0.02)
+gamma_init = RandomNormal(1., 0.02) # for batch normalization
+channel_axis=-1 # Tensorflow backend
+def conv2d(f, *a, **k):
+    return Conv2D(f, kernel_initializer = conv_init, *a, **k)
+def batchnorm():
+    return BatchNormalization(momentum=0.9, axis=channel_axis, epsilon=1.01e-5,
+                                   gamma_initializer = gamma_init)    
 def domain_data_load(domain):
 
 	path='../wildfire_fcn/src/patch_extract2/compact/'+domain['dataset']+'/'
@@ -235,24 +244,35 @@ class ADDA():
 		if weights is not None:
 			self.target_encoder.load_weights(weights, by_name=True)
 		
-	def get_source_classifier(self, model, weights=None):
+	def get_source_classifier(self, model=None, shape=None,weights=None, atomic=False):
 		#nb_classes=2
+		# If atomic=False, returns both encoder+classifier. If true,
+		# returns only the classifier 
 		weight_decay=1E-4
 
+		if atomic==True:
+			inp = Input(shape=shape)
+		else:
+			inp = model.output
 		x = Conv2D(self.class_n, (1, 1), activation='softmax', padding='same', kernel_regularizer=l2(weight_decay),
-						  use_bias=False)(model.output)
+						  use_bias=False)(inp)
 
-		source_classifier_model = Model(inputs=(model.input), outputs=(x))
+		if atomic==True:
+			source_classifier_model = Model(inputs=(inp),outputs=(x))
+		else:
+			source_classifier_model = Model(inputs=(model.input), outputs=(x))
 		
 		if weights is not None:
 			print("Loading source weights")
 			source_classifier_model.load_weights(weights)
+	
 		print(source_classifier_model.summary())
 		return source_classifier_model
 
 	def define_discriminator(self, shape, model_return=False):
 		
 		inp = Input(shape=shape)
+		
 		x = Flatten()(inp)
 		x = Dense(128, activation=LeakyReLU(alpha=0.3), kernel_regularizer=regularizers.l2(0.01), name='discriminator1')(x)
 		
@@ -263,6 +283,37 @@ class ADDA():
 			self.discriminator_model = Model(inputs=(inp), outputs=(x), name='discriminator')
 		else:
 			return Model(inputs=(inp), outputs=(x), name='discriminator')
+	def define_discriminator(self,nc_in, ndf, max_layers=3, use_sigmoid=True):
+		"""DCGAN_D(nc, ndf, max_layers=3)
+		   nc: channels
+		   ndf: filters of the first layer
+		   max_layers: max hidden layers
+		"""    
+		input_a = Input(shape=(None, None, nc_in)) # Here I might put 128
+		_ = input_a
+		_ = conv2d(ndf, kernel_size=4, strides=2, padding="same", name = 'First') (_)
+		_ = LeakyReLU(alpha=0.2)(_)
+		
+		for layer in range(1, max_layers):        
+			out_feat = ndf * min(2**layer, 8)
+			_ = conv2d(out_feat, kernel_size=4, strides=2, padding="same", 
+					   use_bias=False, name = 'pyramid.{0}'.format(layer)             
+							) (_)
+			_ = batchnorm()(_, training=1)        
+			_ = LeakyReLU(alpha=0.2)(_)
+		
+		out_feat = ndf*min(2**max_layers, 8)
+		_ = ZeroPadding2D(1)(_)
+		_ = conv2d(out_feat, kernel_size=4,  use_bias=False, name = 'pyramid_last') (_)
+		_ = batchnorm()(_, training=1)
+		_ = LeakyReLU(alpha=0.2)(_)
+		
+		# final layer
+		_ = ZeroPadding2D(1)(_)
+		_ = conv2d(1, kernel_size=4, name = 'final'.format(out_feat, 1), 
+				   activation = "sigmoid" if use_sigmoid else None) (_)    
+		return Model(inputs=[input_a], outputs=_)
+
 
 	def tensorboard_log(self, callback, names, logs, batch_no):
 		
@@ -403,32 +454,122 @@ class ADDA():
 	def layer_id_from_name_get(self,model,name):
 		index = None
 		for idx, layer in enumerate(model.layers):
-		    if layer.name == name:
-		        index = idx
-		        break
+			if layer.name == name:
+				index = idx
+				break
 		return index		
 	def discriminator_train(self, source,target, source_weights=None, src_discriminator=None, tgt_discriminator=None, epochs=2000, batch_size=6, save_interval=1, start_epoch=0, num_batches=100):   
 		
-
+		use_lsgan = True
+		lrD = 2e-4
+		lrG = 2e-4
+		
 		source['encoder']=self.define_source_encoder(model_return=True)
 		target['encoder']=self.define_source_encoder(model_return=True)
 
-		source['encoder'].summary()
-		discriminator  = self.define_discriminator(source['encoder'].output_shape[1:],model_return=True)
-		#target['discriminator']  = self.define_discriminator(target['encoder'].output_shape[1:],model_return=True)
+		classifier=self.get_source_classifier(shape=source['encoder'].output_shape[1:],atomic=True)
 
+		#discriminator  = self.define_discriminator(source['encoder'].output_shape[1:],model_return=True)
+		#discriminator = self.define_discriminator(self.channels, 64, use_sigmoid = not use_lsgan)
+		#discriminator = self.define_discriminator(128, 64, use_sigmoid = not use_lsgan)
+		discriminator = self.define_discriminator(128, 4, use_sigmoid = not use_lsgan)
+
+		#target['discriminator']  = self.define_discriminator(target['encoder'].output_shape[1:],model_return=True)
+		source['encoder'].summary()
+		classifier.summary()
 		discriminator.summary()
 
 		if source_weights is not None:
 			source['encoder'].load_weights(source_weights,by_name=True)
-				
-		for layer in source['encoder'].layers:
-			layer.trainable = False
+			#target['encoder'].load_weights(source_weights,by_name=True)	
+		
+		if use_lsgan:
+			loss_fn = lambda output, target : K.mean(K.abs(K.square(output-target)))
+		else:
+			loss_fn = lambda output, target : -K.mean(K.log(output+1e-12)*target+K.log(1-output+1e-12)*(1-target)) # Cross entropy
+
+		# target: 0. source: 1.
+		def classifier_variables(encoder,classifier):
+			encoder_in = encoder.inputs[0]
+			encoder_out = encoder.outputs[0]
+			classifier_out = classifier(encoder_out)
+			fn_generate = K.function([encoder_in], [classifier_out])
+			return {"encoder_in":encoder_in, "encoder_out":encoder_out, 
+			"classifier_out":classifier_out, "fn_generate":fn_generate}
+
+		source.update(classifier_variables(source['encoder'], classifier))
+		target.update(classifier_variables(target['encoder'], classifier))
+
+
+		def D_loss(discriminator, source, target): #here would go classifier_out
+			output_source = discriminator([source])
+			output_target = discriminator([target])
+			loss_D_source = loss_fn(output_source, K.ones_like(output_source))
+			loss_D_target = loss_fn(output_target, K.zeros_like(output_target))
+			loss_G = loss_fn(output_target, K.ones_like(output_target)) # Fooling loss
+			loss_D = loss_D_source + loss_D_target
+			return loss_D, loss_G					
+		
+		loss_D, loss_G = D_loss(discriminator,source["encoder_out"],
+			target["encoder_out"])
+
+		# Add lambda when doing classification loss altogether
+
+		weightsD = discriminator.trainable_weights
+		weightsG = target['encoder'].trainable_weights
+
+		training_updates = Adam(lr=lrD, beta_1=0.5).get_updates(weightsD,[],loss_D)
+		netD_train = K.function([source['encoder_in'],target['encoder_in']],
+								[loss_D],training_updates)
+		training_updates = Adam(lr=lrG, beta_1=0.5).get_updates(weightsG,[],loss_G)
+		netG_train = K.function([target['encoder_in']],[loss_G],
+								training_updates)
+		
+		# ===================== Begin Training ========================= #
+		errD_sum = errG_sum = 0
+
+
+		batch = {'train': {}, 'test': {}}
+		self.batch={'train':{},'test':{}}
+		self.metricsG={'train':{},'test':{}}
+		self.metricsD={'train':{},'test':{}}
+		
+		self.batch['train']['size']=batch_size
+		self.batch['test']['size']=batch_size
+		
+		self.batch['train']['n'] = source['train']['in'].shape[0] // self.batch['train']['size']
+		self.batch['test']['n'] = source['test']['in'].shape[0] // self.batch['test']['size']
+
+		deb.prints(self.batch['train']['n'])
+		deb.prints(self.batch['test']['n'])
+
+		for epoch in range(epochs):
+			self.metricsG['train']['loss'] = np.zeros((1, 2))
+			self.metricsD['train']['loss'] = np.zeros((1, 2))
+			
+			# ============ TRAIN LOOP ============================== #
+			for batch_id in range(0, self.batch['train']['n']):
+				idx0 = batch_id*self.batch['train']['size']
+				idx1 = (batch_id+1)*self.batch['train']['size']
+
+				self.metricsD['train']['loss'] += netD_train([source['train']['in'][idx0:idx1],
+							target['train']['in'][idx0:idx1]])
+
+				self.metricsG['train']['loss'] += netG_train([target['train']['in'][idx0:idx1]])
+
+			self.metricsG['train']['loss'] /= self.batch['train']['n'] 
+			self.metricsD['train']['loss'] /= self.batch['train']['n'] 
+			
+			print("Epoch: {}. Loss_G: {}. Loss_D: {}.".format(epoch,
+				self.metricsG['train']['loss'],
+				self.metricsD['train']['loss']))
+			target['encoder'].save_weights('target_encoder.h5')
+			discriminator.save_weights('discriminator.h5')
 
 
 
 
-	
+
 	# Not being used
 	def eval_source_classifier(self, model, data, batch_size=6, domain='Source'):
 		
