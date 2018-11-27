@@ -393,12 +393,12 @@ class ADDA():
 			metrics=metrics_get(data['test'],debug=1)
 
 			
-	def discriminator_train(self, source,target, source_model=None, src_discriminator=None, tgt_discriminator=None, epochs=2000, batch_size=100, save_interval=1, start_epoch=0, num_batches=100):   
+	def discriminator_train(self, source,target, source_model=None, src_discriminator=None, tgt_discriminator=None, epochs=2000, batch_size=6, save_interval=1, start_epoch=0, num_batches=100):   
 		
 		# Source weights were already loaded		
 		source['encoder'] = Model(inputs=source_model.input,
                                  outputs=source_model.get_layer("encoder_tail").output)
-		
+				
 		# Did we clone the source weights also? Otherwise, clone the source model
 		# first, load weights and then crop both models into their encoders
 		target['encoder'] = clone_model(source['encoder'])
@@ -406,68 +406,99 @@ class ADDA():
 		for layer in source['encoder'].layers:
 			layer.trainable = False
 
-		#discriminator = self.get_discriminator(self.source_encoder, src_discriminator)
-		
 		discriminator_model=self.define_discriminator(source['encoder'].output_shape[1:]) # 
-		source['model'] = Model(inputs=(source['encoder'].input), 
+		source['discriminator'] = Model(inputs=(source['encoder'].input), 
 			outputs=(discriminator_model(source['encoder'].output)))
-				
-		target['model'] = Model(inputs=(target['encoder'].input), 
+		source['discriminator'].summary()	
+		target['discriminator'] = Model(inputs=(target['encoder'].input), 
 			outputs=(discriminator_model(target['encoder'].output)))
 		
 
 		#if weights is not None:
 		#	disc.load_weights(weights, by_name=True)
 
+		#if src_discriminator is not None:
+		#	source_discriminator.load_weights(src_discriminator)
+		#if tgt_discriminator is not None:
+		#	target_discriminator.load_weights(tgt_discriminator)
 		
+		source['discriminator'].compile(loss = "binary_crossentropy", optimizer=self.tgt_optimizer, metrics=['accuracy'])		
+		target['discriminator'].compile(loss = "binary_crossentropy", optimizer=self.tgt_optimizer, metrics=['accuracy'])
+
 		
-		target_discriminator = self.get_discriminator(self.target_encoder, tgt_discriminator)
+		#callback1 = keras.callbacks.TensorBoard('data/tensorboard')
+		#callback1.set_model(source_discriminator)
+		#callback2 = keras.callbacks.TensorBoard('data/tensorboard')
+		#callback2.set_model(target_discriminator)
+		#src_names = ['src_discriminator_loss', 'src_discriminator_acc']
+		#tgt_names = ['tgt_discriminator_loss', 'tgt_discriminator_acc']
+
+
+		batch = {'train': {}, 'test': {}}
+		self.batch={'train':{},'test':{}}
+		self.metrics={'train':{},'test':{}}
+		self.batch['train']['size']=batch_size
+		self.batch['test']['size']=batch_size
 		
-		if src_discriminator is not None:
-			source_discriminator.load_weights(src_discriminator)
-		if tgt_discriminator is not None:
-			target_discriminator.load_weights(tgt_discriminator)
+		self.batch['train']['n'] = data['train']['in'].shape[0] // self.batch['train']['size']
+		self.batch['test']['n'] = data['test']['in'].shape[0] // self.batch['test']['size']
+
+		deb.prints(self.batch['train']['n'])
+		deb.prints(self.batch['test']['n'])
 		
-		source_discriminator.compile(loss = "binary_crossentropy", optimizer=self.tgt_optimizer, metrics=['accuracy'])
-		target_discriminator.compile(loss = "binary_crossentropy", optimizer=self.tgt_optimizer, metrics=['accuracy'])
-		
-		callback1 = keras.callbacks.TensorBoard('data/tensorboard')
-		callback1.set_model(source_discriminator)
-		callback2 = keras.callbacks.TensorBoard('data/tensorboard')
-		callback2.set_model(target_discriminator)
-		src_names = ['src_discriminator_loss', 'src_discriminator_acc']
-		tgt_names = ['tgt_discriminator_loss', 'tgt_discriminator_acc']
-		
-		for iteration in range(start_epoch, epochs):
-			
+		for epoch in range(epochs):
 			avg_loss, avg_acc, index = [0, 0], [0, 0], 0
-		
-			for mnist,svhn in zip(src_datagen.flow(source_x, None, batch_size=batch_size), tgt_datagen.flow(target_x, None, batch_size=batch_size)):
-				l1, acc1 = source_discriminator.train_on_batch(mnist, np_utils.to_categorical(np.zeros(mnist.shape[0]), 2))
-				l2, acc2 = target_discriminator.train_on_batch(svhn, np_utils.to_categorical(np.ones(svhn.shape[0]), 2))
-				index+=1
+			for batch_id in range(0, self.batch['train']['n']):
+				idx0 = batch_id*self.batch['train']['size']
+				idx1 = (batch_id+1)*self.batch['train']['size']
+				batch['train']['in'] = source['train']['in'][idx0:idx1]
+				batch['train']['label'] = source['train']['label'][idx0:idx1]
+				l1, acc1 = source['discriminator'].train_on_batch(batch['train']['in'],
+					np_utils.to_categorical(np.zeros(batch['train']['in']), 2))
+				batch['train']['in'] = target['train']['in'][idx0:idx1]
+				batch['train']['label'] = target['train']['label'][idx0:idx1]
+				l2, acc2 = target['discriminator'].train_on_batch(batch['train']['in'],
+					np_utils.to_categorical(np.ones(batch['train']['in']), 2))
+
 				loss, acc = (l1+l2)/2, (acc1+acc2)/2
-				print (iteration+1,': ', index,'/', num_batches, '; Loss: %.4f'%loss, ' (', '%.4f'%l1, '%.4f'%l2, '); Accuracy: ', acc, ' (', '%.4f'%acc1, '%.4f'%acc2, ')')
+				print (batch_id,': ', index,'/', self.batch['train']['n'],
+					'; Loss: %.4f'%loss, ' (', '%.4f'%l1, '%.4f'%l2, '); Accuracy: ', 
+					acc, ' (', '%.4f'%acc1, '%.4f'%acc2, ')')
 				avg_loss[0] += l1
 				avg_acc[0] += acc1
 				avg_loss[1] += l2
 				avg_acc[1] += acc2
-				if index%num_batches == 0:
-					break
+						
+		# for iteration in range(start_epoch, epochs):
 			
-			if iteration%self.discriminator_decay_rate==0:
-				lr = K.get_value(source_discriminator.optimizer.lr)
-				K.set_value(source_discriminator.optimizer.lr, lr*self.discriminator_decay_factor)
-				lr = K.get_value(target_discriminator.optimizer.lr)
-				K.set_value(target_discriminator.optimizer.lr, lr*self.discriminator_decay_factor)
-				print ('Learning Rate Decayed to: ', K.get_value(target_discriminator.optimizer.lr))
+		# 	avg_loss, avg_acc, index = [0, 0], [0, 0], 0
+		
+		# 	for mnist,svhn in zip(src_datagen.flow(source_x, None, batch_size=batch_size), tgt_datagen.flow(target_x, None, batch_size=batch_size)):
+		# 		l1, acc1 = source_discriminator.train_on_batch(mnist, np_utils.to_categorical(np.zeros(mnist.shape[0]), 2))
+		# 		l2, acc2 = target_discriminator.train_on_batch(svhn, np_utils.to_categorical(np.ones(svhn.shape[0]), 2))
+		# 		index+=1
+		# 		loss, acc = (l1+l2)/2, (acc1+acc2)/2
+		# 		print (iteration+1,': ', index,'/', num_batches, '; Loss: %.4f'%loss, ' (', '%.4f'%l1, '%.4f'%l2, '); Accuracy: ', acc, ' (', '%.4f'%acc1, '%.4f'%acc2, ')')
+		# 		avg_loss[0] += l1
+		# 		avg_acc[0] += acc1
+		# 		avg_loss[1] += l2
+		# 		avg_acc[1] += acc2
+		# 		if index%num_batches == 0:
+		# 			break
 			
-			if iteration%save_interval==0:
-				source_discriminator.save_weights('data/discriminator_mnist_%02d.hdf5'%iteration)
-				target_discriminator.save_weights('data/discriminator_svhn_%02d.hdf5'%iteration)
+		# 	if iteration%self.discriminator_decay_rate==0:
+		# 		lr = K.get_value(source_discriminator.optimizer.lr)
+		# 		K.set_value(source_discriminator.optimizer.lr, lr*self.discriminator_decay_factor)
+		# 		lr = K.get_value(target_discriminator.optimizer.lr)
+		# 		K.set_value(target_discriminator.optimizer.lr, lr*self.discriminator_decay_factor)
+		# 		print ('Learning Rate Decayed to: ', K.get_value(target_discriminator.optimizer.lr))
+			
+		# 	if iteration%save_interval==0:
+		# 		source_discriminator.save_weights('data/discriminator_mnist_%02d.hdf5'%iteration)
+		# 		target_discriminator.save_weights('data/discriminator_svhn_%02d.hdf5'%iteration)
 				
-			self.tensorboard_log(callback1, src_names, [avg_loss[0]/mnist.shape[0], avg_acc[0]/mnist.shape[0]], iteration)
-			self.tensorboard_log(callback2, tgt_names, [avg_loss[1]/mnist.shape[0], avg_acc[1]/mnist.shape[0]], iteration)
+		# 	self.tensorboard_log(callback1, src_names, [avg_loss[0]/mnist.shape[0], avg_acc[0]/mnist.shape[0]], iteration)
+		# 	self.tensorboard_log(callback2, tgt_names, [avg_loss[1]/mnist.shape[0], avg_acc[1]/mnist.shape[0]], iteration)
 	
 	# Not being used
 	def eval_source_classifier(self, model, data, batch_size=6, domain='Source'):
@@ -650,7 +681,6 @@ if __name__ == '__main__':
 		adda.discriminator_train(epochs=args.discriminator_epochs, 
 										source_model=source_model, 
 										source=source, target=target, 
-										discriminator=args.discriminator_weights, 
 										start_epoch=args.start_epoch-1)
 	if args.eval_target_classifier is not None:
 		adda.eval_target_classifier(args.eval_source_classifier, args.eval_target_classifier)
