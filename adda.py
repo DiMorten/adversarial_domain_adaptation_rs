@@ -44,6 +44,10 @@ def conv2d(f, *a, **k):
 def batchnorm():
     return BatchNormalization(momentum=0.9, axis=channel_axis, epsilon=1.01e-5,
                                    gamma_initializer = gamma_init)    
+def G(fn_generate, X):
+    r = np.array([fn_generate([X[i:i+1]]) for i in range(X.shape[0])])
+    #return r.swapaxes(0,1)[:,:,0] 
+    return r 
 def domain_data_load(domain):
 
 	path='../wildfire_fcn/src/patch_extract2/compact/'+domain['dataset']+'/'
@@ -206,17 +210,18 @@ class ADDA():
 	def define_source_encoder(self, weights=None,model_return=False):
 	
 		#self.source_encoder = keras.applications.vgg16.VGG16(include_top=False, weights='imagenet', input_shape=self.img_shape, pooling=None, classes=10)
-		_=0
+		count=0
+		conv2d_prefix="conv2d_e"
 		self.source_encoder = Sequential()
 		inp = Input(shape=self.img_shape)
-		x = Conv2D(32, kernel_size=(3, 3), activation='relu', input_shape=self.img_shape, padding='same', name='conv2d'+str(_))(inp)
-		_+=1
-		x = Conv2D(64, kernel_size=(3, 3), activation='relu', padding='same', name='conv2d'+str(_))(x)
-		_+=1
+		x = Conv2D(32, kernel_size=(3, 3), activation='relu', input_shape=self.img_shape, padding='same', name=conv2d_prefix+str(count))(inp)
+		count+=1
+		x = Conv2D(64, kernel_size=(3, 3), activation='relu', padding='same', name=conv2d_prefix+str(count))(x)
+		count+=1
 		#x = MaxPooling2D(pool_size=(2, 2))(x)
 		#x = Conv2D(256, kernel_size=(3, 3), activation='relu', padding='same')(x)
 		x = Conv2D(128, kernel_size=(3, 3), activation='relu', padding='same', \
-			name="encoder_tail")(x)
+			name=conv2d_prefix+str(count))(x)
 		#x = Conv2D(64, kernel_size=(3, 3), activation='relu', padding='same')(x)
 		#x = MaxPooling2D(pool_size=(2, 2))(x)
 		#x = Conv2D(128, kernel_size=(3, 3), activation='relu', input_shape=self.img_shape, padding='same')(inp)
@@ -249,13 +254,14 @@ class ADDA():
 		# If atomic=False, returns both encoder+classifier. If true,
 		# returns only the classifier 
 		weight_decay=1E-4
-
+		count=0
+		conv2d_prefix="conv2d_c"
 		if atomic==True:
 			inp = Input(shape=shape)
 		else:
 			inp = model.output
 		x = Conv2D(self.class_n, (1, 1), activation='softmax', padding='same', kernel_regularizer=l2(weight_decay),
-						  use_bias=False)(inp)
+						  use_bias=False, name=conv2d_prefix+str(count))(inp)
 
 		if atomic==True:
 			source_classifier_model = Model(inputs=(inp),outputs=(x))
@@ -481,6 +487,7 @@ class ADDA():
 
 		if source_weights is not None:
 			source['encoder'].load_weights(source_weights,by_name=True)
+			classifier.load_weights(source_weights,by_name=True)
 			#target['encoder'].load_weights(source_weights,by_name=True)	
 		
 		if use_lsgan:
@@ -493,9 +500,9 @@ class ADDA():
 			encoder_in = encoder.inputs[0]
 			encoder_out = encoder.outputs[0]
 			classifier_out = classifier(encoder_out)
-			fn_generate = K.function([encoder_in], [classifier_out])
+			fn_classify = K.function([encoder_in], [classifier_out])
 			return {"encoder_in":encoder_in, "encoder_out":encoder_out, 
-			"classifier_out":classifier_out, "fn_generate":fn_generate}
+			"classifier_out":classifier_out, "fn_classify":fn_classify}
 
 		source.update(classifier_variables(source['encoder'], classifier))
 		target.update(classifier_variables(target['encoder'], classifier))
@@ -543,30 +550,61 @@ class ADDA():
 		deb.prints(self.batch['train']['n'])
 		deb.prints(self.batch['test']['n'])
 
+		def data_random_permutation(data):
+			idxs=np.random.permutation(data['in'].shape[0])
+			data['in']=data['in'][idxs]
+			data['label']=data['label'][idxs]
+			return data
+
+		training=False
 		for epoch in range(epochs):
-			self.metricsG['train']['loss'] = np.zeros((1, 2))
-			self.metricsD['train']['loss'] = np.zeros((1, 2))
-			
-			# ============ TRAIN LOOP ============================== #
-			for batch_id in range(0, self.batch['train']['n']):
-				idx0 = batch_id*self.batch['train']['size']
-				idx1 = (batch_id+1)*self.batch['train']['size']
 
-				self.metricsD['train']['loss'] += netD_train([source['train']['in'][idx0:idx1],
-							target['train']['in'][idx0:idx1]])
+			if training:
+				# ============ TRAIN LOOP ============================== #
+				
+				source['train']=data_random_permutation(source['train'])
+				target['train']=data_random_permutation(target['train'])
+				
+				self.metricsG['train']['loss'] = np.zeros((1, 2))
+				self.metricsD['train']['loss'] = np.zeros((1, 2))
+				
+				for batch_id in range(0, self.batch['train']['n']):
+					idx0 = batch_id*self.batch['train']['size']
+					idx1 = (batch_id+1)*self.batch['train']['size']
 
-				self.metricsG['train']['loss'] += netG_train([target['train']['in'][idx0:idx1]])
+					self.metricsD['train']['loss'] += netD_train([source['train']['in'][idx0:idx1],
+								target['train']['in'][idx0:idx1]])
 
-			self.metricsG['train']['loss'] /= self.batch['train']['n'] 
-			self.metricsD['train']['loss'] /= self.batch['train']['n'] 
-			
-			print("Epoch: {}. Loss_G: {}. Loss_D: {}.".format(epoch,
-				self.metricsG['train']['loss'],
-				self.metricsD['train']['loss']))
-			target['encoder'].save_weights('target_encoder.h5')
-			discriminator.save_weights('discriminator.h5')
+					errG = netG_train([target['train']['in'][idx0:idx1]])
+					#errG = netG_train([target['train']['in'][idx0:idx1]])
+					#errG = netG_train([target['train']['in'][idx0:idx1]])
+					#errG = netG_train([target['train']['in'][idx0:idx1]])
+					
+					self.metricsG['train']['loss'] += errG
+				self.metricsG['train']['loss'] /= self.batch['train']['n'] 
+				self.metricsD['train']['loss'] /= self.batch['train']['n'] 
+				
+				print("Epoch: {}. Loss_G: {}. Loss_D: {}.".format(epoch,
+					self.metricsG['train']['loss'],
+					self.metricsD['train']['loss']))
+				target['encoder'].save_weights('target_encoder.h5')
+				discriminator.save_weights('discriminator.h5')
 
+			source['test']['prediction']=np.zeros_like(source['test']['label'])
+			deb.prints(source['test']['prediction'].shape)
+			# ============ TEST LOOP ============================== #
+			for batch_id in range(0, self.batch['test']['n']):
+				idx0 = batch_id*self.batch['test']['size']
+				idx1 = (batch_id+1)*self.batch['test']['size']
 
+				source['test']['prediction'][idx0:idx1]=np.squeeze(G(
+					source['fn_classify'], source['test']['in'][idx0:idx1]))
+
+			#====================METRICS GET================================================#
+			deb.prints(source['test']['label'].shape)		
+			deb.prints(idx1)
+			print("Epoch={}".format(epoch))	
+			metrics=metrics_get(source['test'],debug=1)
 
 
 
