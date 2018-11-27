@@ -538,6 +538,8 @@ class ADDA():
 								training_updates)
 		
 		# ===================== Begin Training ========================= #
+		source_testing=False
+		target_testing=True
 		errD_sum = errG_sum = 0
 
 
@@ -550,7 +552,10 @@ class ADDA():
 		self.batch['test']['size']=batch_size
 		
 		self.batch['train']['n'] = source['train']['in'].shape[0] // self.batch['train']['size']
-		self.batch['test']['n'] = source['test']['in'].shape[0] // self.batch['test']['size']
+		if source_testing==True:
+			self.batch['test']['n'] = source['test']['in'].shape[0] // self.batch['test']['size']
+		elif target_testing==True:
+			self.batch['test']['n'] = target['test']['in'].shape[0] // self.batch['test']['size']
 
 		deb.prints(self.batch['train']['n'])
 		deb.prints(self.batch['test']['n'])
@@ -561,7 +566,7 @@ class ADDA():
 			data['label']=data['label'][idxs]
 			return data
 
-		training=False
+		training=True
 		for epoch in range(epochs):
 
 			if training:
@@ -581,9 +586,9 @@ class ADDA():
 								target['train']['in'][idx0:idx1]])
 
 					errG = netG_train([target['train']['in'][idx0:idx1]])
-					#errG = netG_train([target['train']['in'][idx0:idx1]])
-					#errG = netG_train([target['train']['in'][idx0:idx1]])
-					#errG = netG_train([target['train']['in'][idx0:idx1]])
+					errG = netG_train([target['train']['in'][idx0:idx1]])
+					errG = netG_train([target['train']['in'][idx0:idx1]])
+					errG = netG_train([target['train']['in'][idx0:idx1]])
 					
 					self.metricsG['train']['loss'] += errG
 				self.metricsG['train']['loss'] /= self.batch['train']['n'] 
@@ -594,23 +599,35 @@ class ADDA():
 					self.metricsD['train']['loss']))
 				target['encoder'].save_weights('target_encoder.h5')
 				discriminator.save_weights('discriminator.h5')
-
-			source['test']['prediction']=np.zeros_like(source['test']['label'])
-			deb.prints(source['test']['prediction'].shape)
+			if source_testing==True:
+				source['test']['prediction']=np.zeros_like(source['test']['label'])
+				deb.prints(source['test']['prediction'].shape)
+			if target_testing==True:
+				target['test']['prediction']=np.zeros_like(target['test']['label'])
+				deb.prints(target['test']['prediction'].shape)
+			
+			
 			# ============ TEST LOOP ============================== #
+			
 			for batch_id in range(0, self.batch['test']['n']):
 				idx0 = batch_id*self.batch['test']['size']
 				idx1 = (batch_id+1)*self.batch['test']['size']
-
-				source['test']['prediction'][idx0:idx1]=np.squeeze(G(
-					source['fn_classify'], source['test']['in'][idx0:idx1]))
-
+				if source_testing==True:
+					source['test']['prediction'][idx0:idx1]=np.squeeze(G(
+						source['fn_classify'], source['test']['in'][idx0:idx1]))
+				if target_testing==True:
+					target['test']['prediction'][idx0:idx1]=np.squeeze(G(
+						target['fn_classify'], target['test']['in'][idx0:idx1]))
 			#====================METRICS GET================================================#
-			deb.prints(source['test']['label'].shape)		
+			if source_testing==True:
+				deb.prints(source['test']['label'].shape)		
+				metrics=metrics_get(source['test'],debug=1)
+			if target_testing==True:
+				deb.prints(target['test']['label'].shape)		
+				metrics=metrics_get(target['test'],debug=1)
 			deb.prints(idx1)
 			print("Epoch={}".format(epoch))	
-			metrics=metrics_get(source['test'],debug=1)
-
+	
 
 
 	# Not being used
