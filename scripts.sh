@@ -4,7 +4,7 @@
 python adda.py -sds="para"
 
 # Train source model from weights
-python adda.py -sds="para" -s="results/source_weights.h5"
+python adda.py -sds="para" -s="results/source_weights_para.h5"
 
 # Eval source model on source para
 python adda.py -t=True -s="results/source_weights_para.h5" -sds "para"
@@ -17,7 +17,7 @@ python adda.py -f -s="results/source_weights_para.h5" -sds "para" -tds="acre"
 # =========== Acre as source =======================================
 
 
-# Train source model from weights
+# Train source model 
 python adda.py -sds="acre" 
 
 # Eval source model on source 

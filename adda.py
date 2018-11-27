@@ -250,6 +250,7 @@ class ADDA():
 			self.target_encoder.load_weights(weights, by_name=True)
 		
 	def get_source_classifier(self, model=None, shape=None,weights=None, atomic=False):
+		print("[@get_source_classifier]")
 		#nb_classes=2
 		# If atomic=False, returns both encoder+classifier. If true,
 		# returns only the classifier 
@@ -258,11 +259,13 @@ class ADDA():
 		conv2d_prefix="conv2d_c"
 		if atomic==True:
 			inp = Input(shape=shape)
-		else:
-			inp = model.output
-		x = Conv2D(self.class_n, (1, 1), activation='softmax', padding='same', kernel_regularizer=l2(weight_decay),
+			x = Conv2D(self.class_n, (1, 1), activation='softmax', padding='same', kernel_regularizer=l2(weight_decay),
 						  use_bias=False, name=conv2d_prefix+str(count))(inp)
 
+		else:			
+			x = Conv2D(self.class_n, (1, 1), activation='softmax', padding='same', kernel_regularizer=l2(weight_decay),
+						  use_bias=False, name=conv2d_prefix+str(count))(model.output)
+		print(0.3)
 		if atomic==True:
 			source_classifier_model = Model(inputs=(inp),outputs=(x))
 		else:
@@ -270,9 +273,11 @@ class ADDA():
 		
 		if weights is not None:
 			print("Loading source weights")
-			source_classifier_model.load_weights(weights)
+			source_classifier_model.load_weights(weights,by_name=True)
 	
-		print(source_classifier_model.summary())
+		print(0.4)
+		source_classifier_model.summary()
+		print(0.5)
 		return source_classifier_model
 
 	def define_discriminator(self, shape, model_return=False):
@@ -769,10 +774,13 @@ if __name__ == '__main__':
 
 	
 	adda = ADDA(args.lr, 32, 6,class_n=class_n)
+	print(0.1)
 	adda.define_source_encoder()
-	
+	print(0.2)
 	# source
-	source_model = adda.get_source_classifier(adda.source_encoder, args.source_weights)
+	source_model = adda.get_source_classifier(adda.source_encoder, 
+		weights=args.source_weights)
+	print(2)
 	source_model.summary()
 	if not args.train_discriminator:
 
