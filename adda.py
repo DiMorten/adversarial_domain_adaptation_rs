@@ -477,10 +477,12 @@ class ADDA():
 		use_lsgan = True
 		lrD = 2e-4
 		lrG = 2e-4
-		
+
+		λ = 1
+
 		source['encoder']=self.define_source_encoder(model_return=True)
 		target['encoder']=self.define_source_encoder(model_return=True)
-
+		segmentation_label = Input(shape=source['train']['label'].shape[1::])
 		classifier=self.get_source_classifier(shape=source['encoder'].output_shape[1:],atomic=True)
 
 		#discriminator  = self.define_discriminator(source['encoder'].output_shape[1:],model_return=True)
@@ -516,28 +518,36 @@ class ADDA():
 		target.update(classifier_variables(target['encoder'], classifier))
 
 
-		def D_loss(discriminator, source, target): #here would go classifier_out
+		def D_loss(discriminator, source, target, classifier, segmentation_label): #here would go classifier_out
+			classification_source = classifier([source])
 			output_source = discriminator([source])
 			output_target = discriminator([target])
 			loss_D_source = loss_fn(output_source, K.ones_like(output_source))
 			loss_D_target = loss_fn(output_target, K.zeros_like(output_target))
 			loss_G = loss_fn(output_target, K.ones_like(output_target)) # Fooling loss
 			loss_D = loss_D_source + loss_D_target
-			return loss_D, loss_G					
+			loss_segmentation = loss_fn(classification_source, segmentation_label)
+			return loss_D, loss_G, loss_segmentation					
 		
-		loss_D, loss_G = D_loss(discriminator,source["encoder_out"],
-			target["encoder_out"])
+		loss_D, loss_G, loss_segmentation = D_loss(discriminator,source["encoder_out"],
+			target["encoder_out"], classifier, segmentation_label)
 
+		#loss_G = loss_G
 		# Add lambda when doing classification loss altogether
 
 		weightsD = discriminator.trainable_weights
 		weightsG = target['encoder'].trainable_weights
+		weights_segmentation = classifier.trainable_weights
 
 		training_updates = Adam(lr=lrD, beta_1=0.5).get_updates(weightsD,[],loss_D)
 		netD_train = K.function([source['encoder_in'],target['encoder_in']],
 								[loss_D],training_updates)
 		training_updates = Adam(lr=lrG, beta_1=0.5).get_updates(weightsG,[],loss_G)
 		netG_train = K.function([target['encoder_in']],[loss_G],
+								training_updates)
+		training_updates = Adam(lr=lrG, beta_1=0.5).get_updates(weights_segmentation,[],loss_segmentation)
+		netsegmentation_train = K.function([source['encoder_in'],
+								segmentation_label],[loss_segmentation],
 								training_updates)
 		
 		# ===================== Begin Training ========================= #
@@ -580,13 +590,10 @@ class ADDA():
 				
 				self.metricsG['train']['loss'] = np.zeros((1, 2))
 				self.metricsD['train']['loss'] = np.zeros((1, 2))
-				
+				err_segmentation = np.zeros((1, 2))
 				for batch_id in range(0, self.batch['train']['n']):
 					idx0 = batch_id*self.batch['train']['size']
 					idx1 = (batch_id+1)*self.batch['train']['size']
-
-					self.metricsD['train']['loss'] += netD_train([source['train']['in'][idx0:idx1],
-								target['train']['in'][idx0:idx1]])
 
 					errG = netG_train([target['train']['in'][idx0:idx1]])
 					errG = netG_train([target['train']['in'][idx0:idx1]])
@@ -594,12 +601,20 @@ class ADDA():
 					errG = netG_train([target['train']['in'][idx0:idx1]])
 					
 					self.metricsG['train']['loss'] += errG
+
+					self.metricsD['train']['loss'] += netD_train([source['train']['in'][idx0:idx1],
+								target['train']['in'][idx0:idx1]])
+
+					err_segmentation += netsegmentation_train([source['train']['in'][idx0:idx1],
+						source['train']['label'][idx0:idx1]])
+
 				self.metricsG['train']['loss'] /= self.batch['train']['n'] 
 				self.metricsD['train']['loss'] /= self.batch['train']['n'] 
 				
 				print("Epoch: {}. Loss_G: {}. Loss_D: {}.".format(epoch,
 					self.metricsG['train']['loss'],
 					self.metricsD['train']['loss']))
+				print("Loss_segmentation: {}".format(err_segmentation))
 				target['encoder'].save_weights('target_encoder.h5')
 				discriminator.save_weights('discriminator.h5')
 			if source_testing==True:
@@ -630,7 +645,8 @@ class ADDA():
 				metrics=metrics_get(target['test'],debug=1)
 			deb.prints(idx1)
 			print("Epoch={}".format(epoch))	
-	
+
+
 
 
 	# Not being used
