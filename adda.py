@@ -40,14 +40,14 @@ conv_init = RandomNormal(0, 0.02)
 gamma_init = RandomNormal(1., 0.02) # for batch normalization
 channel_axis=-1 # Tensorflow backend
 def conv2d(f, *a, **k):
-    return Conv2D(f, kernel_initializer = conv_init, *a, **k)
+	return Conv2D(f, kernel_initializer = conv_init, *a, **k)
 def batchnorm():
-    return BatchNormalization(momentum=0.9, axis=channel_axis, epsilon=1.01e-5,
-                                   gamma_initializer = gamma_init)    
+	return BatchNormalization(momentum=0.9, axis=channel_axis, epsilon=1.01e-5,
+								   gamma_initializer = gamma_init)    
 def G(fn_generate, X):
-    r = np.array([fn_generate([X[i:i+1]]) for i in range(X.shape[0])])
-    #return r.swapaxes(0,1)[:,:,0] 
-    return r 
+	r = np.array([fn_generate([X[i:i+1]]) for i in range(X.shape[0])])
+	#return r.swapaxes(0,1)[:,:,0] 
+	return r 
 
 def stats_print(x):
 	print(np.min(x),np.max(x),np.average(x),x.dtype)
@@ -500,10 +500,27 @@ class ADDA():
 			classifier.load_weights(source_weights,by_name=True)
 			target['encoder'].load_weights(source_weights,by_name=True)	
 		
+		weights = K.variable(source['loss_weights'])
+			
 		if use_lsgan:
 			loss_fn = lambda output, target : K.mean(K.abs(K.square(output-target)))
 		else:
 			loss_fn = lambda output, target : -K.mean(K.log(output+1e-12)*target+K.log(1-output+1e-12)*(1-target)) # Cross entropy
+
+		loss_weighted = lambda output, target : -K.mean(K.log(output+1e-12)*target*weights) # Cross entropy
+
+		# def loss_weighted(y_pred, y_true, weights):
+
+
+		# 	# scale predictions so that the class probas of each sample sum to 1
+		# 	#y_pred /= K.sum(y_pred, axis=-1, keepdims=True)
+		# 	# clip to prevent NaN's and Inf's
+		# 	##y_pred = K.clip(y_pred, K.epsilon(), 1 - K.epsilon())
+		# 	# calc
+		# 	loss = y_true * K.log(y_pred) * weights
+		# 	loss = -K.sum(loss, -1)
+		# 	return loss
+
 
 		# target: 0. source: 1.
 		def classifier_variables(encoder,classifier):
@@ -518,26 +535,28 @@ class ADDA():
 		target.update(classifier_variables(target['encoder'], classifier))
 
 
-		def D_loss(discriminator, source, target, classifier, segmentation_label): #here would go classifier_out
-			classification_source = classifier([source])
+		def D_loss(discriminator, source, target, classifier, segmentation_label, loss_weights): #here would go classifier_out
+			classification_source = classifier([target])
 			output_source = discriminator([source])
 			output_target = discriminator([target])
 			loss_D_source = loss_fn(output_source, K.ones_like(output_source))
 			loss_D_target = loss_fn(output_target, K.zeros_like(output_target))
 			loss_G = loss_fn(output_target, K.ones_like(output_target)) # Fooling loss
 			loss_D = loss_D_source + loss_D_target
-			loss_segmentation = loss_fn(classification_source, segmentation_label)
+			loss_segmentation = loss_weighted(classification_source, 
+				segmentation_label)
 			return loss_D, loss_G, loss_segmentation					
 		
 		loss_D, loss_G, loss_segmentation = D_loss(discriminator,source["encoder_out"],
-			target["encoder_out"], classifier, segmentation_label)
+			target["encoder_out"], classifier, segmentation_label, 
+			source['loss_weights'])
 
 		#loss_G = loss_G
 		# Add lambda when doing classification loss altogether
 
 		weightsD = discriminator.trainable_weights
 		weightsG = target['encoder'].trainable_weights
-		weights_segmentation = classifier.trainable_weights
+		weights_segmentation = classifier.trainable_weights + target['encoder'].trainable_weights
 
 		training_updates = Adam(lr=lrD, beta_1=0.5).get_updates(weightsD,[],loss_D)
 		netD_train = K.function([source['encoder_in'],target['encoder_in']],
@@ -546,7 +565,7 @@ class ADDA():
 		netG_train = K.function([target['encoder_in']],[loss_G],
 								training_updates)
 		training_updates = Adam(lr=lrG, beta_1=0.5).get_updates(weights_segmentation,[],loss_segmentation)
-		netsegmentation_train = K.function([source['encoder_in'],
+		netsegmentation_train = K.function([target['encoder_in'],
 								segmentation_label],[loss_segmentation],
 								training_updates)
 		
@@ -605,7 +624,7 @@ class ADDA():
 					self.metricsD['train']['loss'] += netD_train([source['train']['in'][idx0:idx1],
 								target['train']['in'][idx0:idx1]])
 
-					err_segmentation += netsegmentation_train([source['train']['in'][idx0:idx1],
+					err_segmentation = netsegmentation_train([source['train']['in'][idx0:idx1],
 						source['train']['label'][idx0:idx1]])
 
 				self.metricsG['train']['loss'] /= self.batch['train']['n'] 
