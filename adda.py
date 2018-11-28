@@ -587,7 +587,8 @@ class ADDA():
 		self.batch['train']['size']=batch_size
 		self.batch['test']['size']=batch_size
 		
-		self.batch['train']['n'] = source['train']['in'].shape[0] // self.batch['train']['size']
+		#self.batch['train']['n'] = source['train']['in'].shape[0] // self.batch['train']['size']
+		self.batch['train']['n'] = target['train']['in'].shape[0] // self.batch['train']['size']
 
 		deb.prints(self.batch['train']['n'])
 
