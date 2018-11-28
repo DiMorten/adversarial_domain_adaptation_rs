@@ -352,7 +352,7 @@ class ADDA():
 		return disc
 
 	def source_model_train(self, model, data, batch_size=6, epochs=2000, \
-		save_interval=1, start_epoch=0,training=True):
+		save_interval=1, start_epoch=0,training=True,testing=1):
 
 		
 		# Define source data generator
@@ -439,31 +439,35 @@ class ADDA():
 			else:
 				print("Training was skipped")
 			#==========================TEST LOOP================================================#
-			data['test']['prediction']=np.zeros_like(data['test']['label'])
-			self.batch_test_stats=True
+			if testing==1:
+				data['test']['prediction']=np.zeros_like(data['test']['label'])
+				self.batch_test_stats=True
 
-			for batch_id in range(0, self.batch['test']['n']):
-				idx0 = batch_id*self.batch['test']['size']
-				idx1 = (batch_id+1)*self.batch['test']['size']
+				for batch_id in range(0, self.batch['test']['n']):
+					idx0 = batch_id*self.batch['test']['size']
+					idx1 = (batch_id+1)*self.batch['test']['size']
 
-				batch['test']['in'] = data['test']['in'][idx0:idx1]
-				batch['test']['label'] = data['test']['label'][idx0:idx1]
+					batch['test']['in'] = data['test']['in'][idx0:idx1]
+					batch['test']['label'] = data['test']['label'][idx0:idx1]
 
-				if self.batch_test_stats:
-					self.metrics['test']['loss'] += model.test_on_batch(
-						batch['test']['in'], batch['test']['label'])        # Accumulated epoch
+					if self.batch_test_stats:
+						self.metrics['test']['loss'] += model.test_on_batch(
+							batch['test']['in'], batch['test']['label'])        # Accumulated epoch
 
-				data['test']['prediction'][idx0:idx1]=model.predict(batch['test']['in'],batch_size=self.batch['test']['size'])
+					data['test']['prediction'][idx0:idx1]=model.predict(
+						batch['test']['in'],batch_size=self.batch['test']['size'])
 
-			#====================METRICS GET================================================#
-			deb.prints(data['test']['label'].shape)     
-			deb.prints(idx1)
+				#====================METRICS GET================================================#
+				deb.prints(data['test']['label'].shape)     
+				deb.prints(idx1)
+			else:
+				print("Testing was skipped")
 			print("Epoch={}".format(epoch)) 
-			
-			# Average epoch loss
-			self.metrics['test']['loss'] /= self.batch['test']['n']
-			
-			metrics=metrics_get(data['test'],debug=1)
+			if testing==1:
+				# Average epoch loss
+				self.metrics['test']['loss'] /= self.batch['test']['n']
+				
+				metrics=metrics_get(data['test'],debug=1)
 
 	def layer_id_from_name_get(self,model,name):
 		index = None
@@ -598,7 +602,7 @@ class ADDA():
 			data['label']=data['label'][idxs]
 			return data
 
-		training=True
+		training=False
 		for epoch in range(epochs):
 
 			if training:
@@ -636,6 +640,8 @@ class ADDA():
 				print("Loss_segmentation: {}".format(err_segmentation))
 				target['encoder'].save_weights('target_encoder.h5')
 				discriminator.save_weights('discriminator.h5')
+			else:
+				print("Skipped training")
 			if source_testing==True:
 				source['test']['prediction']=np.zeros_like(source['test']['label'])
 				deb.prints(source['test']['prediction'].shape)
@@ -731,7 +737,7 @@ if __name__ == '__main__':
 	ap.add_argument('-d', '--eval_target_classifier', default=None, help="Path to target discriminator model to test/evaluate")
 	ap.add_argument('-sds', '--source_dataset', default="para", help="Path to source dataset")
 	ap.add_argument('-tds', '--target_dataset', default="acre", help="Path to target dataset")
-	
+	ap.add_argument('-ting', '--testing', default=1, help="Path to target dataset")
 	args = ap.parse_args()
 	
 	# ========= Define data sources =====================
@@ -752,6 +758,7 @@ if __name__ == '__main__':
 
 	load_mode=2
 	if load_mode==1:
+
 		path='../wildfire_fcn/src/patch_extract2/patches/'
 		source['mask'] = load_data(path+source['dataset']+"/mask/*.npy")
 		target['mask'] = load_data(path+target['dataset']+"/mask/*.npy")
@@ -816,8 +823,9 @@ if __name__ == '__main__':
 
 		source['train']['in']=folder_load(source['train']['in'])
 		source['train']['label']=folder_load(source['train']['label'])
-		source['test']['in']=folder_load(source['test']['in'])
-		source['test']['label']=folder_load(source['test']['label'])
+		if args.testing == 1:
+			source['test']['in']=folder_load(source['test']['in'])
+			source['test']['label']=folder_load(source['test']['label'])
 
 	else:
 		
@@ -841,7 +849,8 @@ if __name__ == '__main__':
 
 		if args.eval_source_classifier is None:
 			adda.source_model_train(source_model, data=source, \
-				start_epoch=args.start_epoch-1) 
+				start_epoch=args.start_epoch-1,
+				testing=args.testing) 
 		else:
 			adda.source_model_train(source_model, data=source, training=False, \
 				start_epoch=args.start_epoch-1)
