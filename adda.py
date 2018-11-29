@@ -352,7 +352,8 @@ class ADDA():
 		return disc
 
 	def source_model_train(self, model, data, batch_size=6, epochs=2000, \
-		save_interval=1, start_epoch=0,training=True,testing=1):
+		save_interval=1, start_epoch=0,training=True,testing=1,
+		weights_save=1):
 
 		
 		# Define source data generator
@@ -434,8 +435,8 @@ class ADDA():
 
 
 				# ================= SAVE WEIGHTS ===============
-
-				model.save_weights(self.source_weights_path+'source_weights_'+data['dataset']+'.h5')
+				if weights_save==1:
+					model.save_weights(self.source_weights_path+'source_weights_'+data['dataset']+'.h5')
 			else:
 				print("Training was skipped")
 			#==========================TEST LOOP================================================#
@@ -486,7 +487,7 @@ class ADDA():
 
 		source['encoder']=self.define_source_encoder(model_return=True)
 		target['encoder']=self.define_source_encoder(model_return=True)
-		segmentation_label = Input(shape=source['train']['label'].shape[1::])
+		C_label = Input(shape=source['train']['label'].shape[1::])
 		classifier=self.get_source_classifier(shape=source['encoder'].output_shape[1:],atomic=True)
 
 		#discriminator  = self.define_discriminator(source['encoder'].output_shape[1:],model_return=True)
@@ -511,7 +512,8 @@ class ADDA():
 		else:
 			loss_fn = lambda output, target : -K.mean(K.log(output+1e-12)*target+K.log(1-output+1e-12)*(1-target)) # Cross entropy
 
-		loss_weighted = lambda output, target : -K.mean(K.log(output+1e-12)*target*weights) # Cross entropy
+		loss_weighted_fn = lambda output, target : -K.mean(K.log(output+1e-12)*target*weights) # Cross entropy
+		#loss_weighted_fn = lambda output, target : -K.mean(weights*(K.log(output+1e-12)*target+K.log(1-output+1e-12)*(1-target))) # Cross entropy
 
 		# def loss_weighted(y_pred, y_true, weights):
 
@@ -539,38 +541,38 @@ class ADDA():
 		target.update(classifier_variables(target['encoder'], classifier))
 
 
-		def D_loss(discriminator, source, target, classifier, segmentation_label, loss_weights): #here would go classifier_out
-			classification_source = classifier([target])
-			output_source = discriminator([source])
-			output_target = discriminator([target])
-			loss_D_source = loss_fn(output_source, K.ones_like(output_source))
-			loss_D_target = loss_fn(output_target, K.zeros_like(output_target))
-			loss_G = loss_fn(output_target, K.ones_like(output_target)) # Fooling loss
-			loss_D = loss_D_source + loss_D_target
-			loss_segmentation = loss_weighted(classification_source, 
-				segmentation_label)
-			return loss_D, loss_G, loss_segmentation					
+		def D_G_C_loss(discriminator, source_encoder_out, target_encoder_out, 
+			classifier, C_label, loss_weights): #here would go classifier_out
+			target_C_out = classifier([target_encoder_out])
+			source_D_out = discriminator([source_encoder_out])
+			target_D_out = discriminator([target_encoder_out])
+			source_D_loss = loss_fn(source_D_out, K.ones_like(source_D_out))
+			target_D_loss = loss_fn(target_D_out, K.zeros_like(target_D_out))
+			G_loss = loss_fn(target_D_out, K.ones_like(target_D_out)) # Fooling loss
+			D_loss = source_D_loss + target_D_loss
+			C_loss = loss_weighted_fn(target_C_out, C_label)
+			return D_loss, G_loss, C_loss					
 		
-		loss_D, loss_G, loss_segmentation = D_loss(discriminator,source["encoder_out"],
-			target["encoder_out"], classifier, segmentation_label, 
+		D_loss, G_loss, C_loss = D_G_C_loss(discriminator,source["encoder_out"],
+			target["encoder_out"], classifier, C_label, 
 			source['loss_weights'])
 
-		#loss_G = loss_G
+		#G_loss = G_loss
 		# Add lambda when doing classification loss altogether
 
-		weightsD = discriminator.trainable_weights
-		weightsG = target['encoder'].trainable_weights
-		weights_segmentation = classifier.trainable_weights + target['encoder'].trainable_weights
+		D_weights = discriminator.trainable_weights
+		G_weights = target['encoder'].trainable_weights
+		C_weights = classifier.trainable_weights + target['encoder'].trainable_weights
 
-		training_updates = Adam(lr=lrD, beta_1=0.5).get_updates(weightsD,[],loss_D)
+		training_updates = Adam(lr=lrD, beta_1=0.5).get_updates(D_weights,[],D_loss)
 		netD_train = K.function([source['encoder_in'],target['encoder_in']],
-								[loss_D],training_updates)
-		training_updates = Adam(lr=lrG, beta_1=0.5).get_updates(weightsG,[],loss_G)
-		netG_train = K.function([target['encoder_in']],[loss_G],
+								[D_loss],training_updates)
+		training_updates = Adam(lr=lrG, beta_1=0.5).get_updates(G_weights,[],G_loss)
+		netG_train = K.function([target['encoder_in']],[G_loss],
 								training_updates)
-		training_updates = Adam(lr=lrG, beta_1=0.5).get_updates(weights_segmentation,[],loss_segmentation)
+		training_updates = Adam(lr=lrG, beta_1=0.5).get_updates(C_weights,[],C_loss)
 		netsegmentation_train = K.function([target['encoder_in'],
-								segmentation_label],[loss_segmentation],
+								C_label],[C_loss],
 								training_updates)
 		
 		# ===================== Begin Training ========================= #
@@ -635,10 +637,10 @@ class ADDA():
 				self.metricsG['train']['loss'] /= self.batch['train']['n'] 
 				self.metricsD['train']['loss'] /= self.batch['train']['n'] 
 				
-				print("Epoch: {}. Loss_G: {}. Loss_D: {}.".format(epoch,
+				print("Epoch: {}. G_loss: {}. D_loss: {}.".format(epoch,
 					self.metricsG['train']['loss'],
 					self.metricsD['train']['loss']))
-				print("Loss_segmentation: {}".format(err_segmentation))
+				print("C_loss: {}".format(err_segmentation))
 				target['encoder'].save_weights('target_encoder.h5')
 				discriminator.save_weights('discriminator.h5')
 			else:
@@ -747,9 +749,11 @@ if __name__ == '__main__':
 	ap.add_argument('-d', '--eval_target_classifier', default=None, help="Path to target discriminator model to test/evaluate")
 	ap.add_argument('-sds', '--source_dataset', default="para", help="Path to source dataset")
 	ap.add_argument('-tds', '--target_dataset', default="acre", help="Path to target dataset")
-	ap.add_argument('-ting', '--testing', default=1, help="Path to target dataset")
-	args = ap.parse_args()
+	ap.add_argument('-ting', '--testing', type=int, default=1, help="Path to target dataset")
+	ap.add_argument('-ws', '--weights_save', type=int, default=1, help="Path to target dataset")
 	
+	args = ap.parse_args()
+	deb.prints(args.testing)
 	# ========= Define data sources =====================
 	
 	def load_data(file_pattern):
@@ -860,7 +864,8 @@ if __name__ == '__main__':
 		if args.eval_source_classifier is None:
 			adda.source_model_train(source_model, data=source, \
 				start_epoch=args.start_epoch-1,
-				testing=args.testing) 
+				testing=args.testing,
+				weights_save=args.weights_save) 
 		else:
 			adda.source_model_train(source_model, data=source, training=False, \
 				start_epoch=args.start_epoch-1)
