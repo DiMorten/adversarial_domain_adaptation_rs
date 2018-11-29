@@ -352,8 +352,7 @@ class ADDA():
 		return disc
 
 	def source_model_train(self, model, data, batch_size=6, epochs=2000, \
-		save_interval=1, start_epoch=0,training=True,testing=1,
-		weights_save=1):
+		save_interval=1, start_epoch=0,training=True,testing=1):
 
 		
 		# Define source data generator
@@ -435,8 +434,8 @@ class ADDA():
 
 
 				# ================= SAVE WEIGHTS ===============
-				if weights_save==1:
-					model.save_weights(self.source_weights_path+'source_weights_'+data['dataset']+'.h5')
+
+				model.save_weights(self.source_weights_path+'source_weights_'+data['dataset']+'.h5')
 			else:
 				print("Training was skipped")
 			#==========================TEST LOOP================================================#
@@ -512,8 +511,7 @@ class ADDA():
 		else:
 			loss_fn = lambda output, target : -K.mean(K.log(output+1e-12)*target+K.log(1-output+1e-12)*(1-target)) # Cross entropy
 
-		loss_weighted_fn = lambda output, target : -K.mean(K.log(output+1e-12)*target*weights) # Cross entropy
-		#loss_weighted_fn = lambda output, target : -K.mean(weights*(K.log(output+1e-12)*target+K.log(1-output+1e-12)*(1-target))) # Cross entropy
+		loss_weighted = lambda output, target : -K.mean(K.log(output+1e-12)*target*weights) # Cross entropy
 
 		# def loss_weighted(y_pred, y_true, weights):
 
@@ -541,16 +539,15 @@ class ADDA():
 		target.update(classifier_variables(target['encoder'], classifier))
 
 
-		def D_G_C_loss(discriminator, source_encoder_out, target_encoder_out, 
-			classifier, C_label, loss_weights): #here would go classifier_out
-			target_C_out = classifier([target_encoder_out])
-			source_D_out = discriminator([source_encoder_out])
-			target_D_out = discriminator([target_encoder_out])
+		def D_G_C_loss(discriminator, source_E_out, target_E_out, classifier, C_label, loss_weights): #here would go classifier_out
+			C_out = classifier([target_E_out])
+			source_D_out = discriminator([source_E_out])
+			target_D_out = discriminator([target_E_out])
 			source_D_loss = loss_fn(source_D_out, K.ones_like(source_D_out))
 			target_D_loss = loss_fn(target_D_out, K.zeros_like(target_D_out))
 			G_loss = loss_fn(target_D_out, K.ones_like(target_D_out)) # Fooling loss
 			D_loss = source_D_loss + target_D_loss
-			C_loss = loss_weighted_fn(target_C_out, C_label)
+			C_loss = loss_weighted(C_out, C_label)
 			return D_loss, G_loss, C_loss					
 		
 		D_loss, G_loss, C_loss = D_G_C_loss(discriminator,source["encoder_out"],
@@ -571,7 +568,7 @@ class ADDA():
 		netG_train = K.function([target['encoder_in']],[G_loss],
 								training_updates)
 		training_updates = Adam(lr=lrG, beta_1=0.5).get_updates(C_weights,[],C_loss)
-		netsegmentation_train = K.function([target['encoder_in'],
+		netC_train = K.function([target['encoder_in'],
 								C_label],[C_loss],
 								training_updates)
 		
@@ -589,8 +586,11 @@ class ADDA():
 		self.batch['train']['size']=batch_size
 		self.batch['test']['size']=batch_size
 		
-		#self.batch['train']['n'] = source['train']['in'].shape[0] // self.batch['train']['size']
-		self.batch['train']['n'] = target['train']['in'].shape[0] // self.batch['train']['size']
+		smallest_sample_n_from_domains=source['train']['in'].shape[0] \
+			if (source['train']['in'].shape[0]<target['train']['in'].shape[0]) \
+			else target['train']['in'].shape[0]
+		self.batch['train']['n'] = smallest_sample_n_from_domains // self.batch['train']['size']
+		#self.batch['train']['n'] = target['train']['in'].shape[0] // self.batch['train']['size']
 
 		deb.prints(self.batch['train']['n'])
 
@@ -627,12 +627,12 @@ class ADDA():
 					self.metricsD['train']['loss'] += netD_train([source['train']['in'][idx0:idx1],
 								target['train']['in'][idx0:idx1]])
 
-					err_segmentation = netsegmentation_train([source['train']['in'][idx0:idx1],
-						source['train']['label'][idx0:idx1]])
-					err_segmentation = netsegmentation_train([source['train']['in'][idx0:idx1],
-						source['train']['label'][idx0:idx1]])
-					err_segmentation = netsegmentation_train([source['train']['in'][idx0:idx1],
-						source['train']['label'][idx0:idx1]])
+					#err_segmentation = netC_train([source['train']['in'][idx0:idx1],
+					#	source['train']['label'][idx0:idx1]])
+					#err_segmentation = netC_train([source['train']['in'][idx0:idx1],
+					#	source['train']['label'][idx0:idx1]])
+					#err_segmentation = netC_train([source['train']['in'][idx0:idx1],
+					#	source['train']['label'][idx0:idx1]])
 
 				self.metricsG['train']['loss'] /= self.batch['train']['n'] 
 				self.metricsD['train']['loss'] /= self.batch['train']['n'] 
@@ -749,11 +749,9 @@ if __name__ == '__main__':
 	ap.add_argument('-d', '--eval_target_classifier', default=None, help="Path to target discriminator model to test/evaluate")
 	ap.add_argument('-sds', '--source_dataset', default="para", help="Path to source dataset")
 	ap.add_argument('-tds', '--target_dataset', default="acre", help="Path to target dataset")
-	ap.add_argument('-ting', '--testing', type=int, default=1, help="Path to target dataset")
-	ap.add_argument('-ws', '--weights_save', type=int, default=1, help="Path to target dataset")
-	
+	ap.add_argument('-ting', '--testing', default=1, help="Path to target dataset")
 	args = ap.parse_args()
-	deb.prints(args.testing)
+	
 	# ========= Define data sources =====================
 	
 	def load_data(file_pattern):
@@ -864,8 +862,7 @@ if __name__ == '__main__':
 		if args.eval_source_classifier is None:
 			adda.source_model_train(source_model, data=source, \
 				start_epoch=args.start_epoch-1,
-				testing=args.testing,
-				weights_save=args.weights_save) 
+				testing=args.testing) 
 		else:
 			adda.source_model_train(source_model, data=source, training=False, \
 				start_epoch=args.start_epoch-1)
