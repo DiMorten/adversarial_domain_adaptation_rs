@@ -618,9 +618,9 @@ class ADDA():
 					idx1 = (batch_id+1)*self.batch['train']['size']
 
 					errG = netG_train([target['train']['in'][idx0:idx1]])
-					errG = netG_train([target['train']['in'][idx0:idx1]])
-					errG = netG_train([target['train']['in'][idx0:idx1]])
-					errG = netG_train([target['train']['in'][idx0:idx1]])
+					#errG = netG_train([target['train']['in'][idx0:idx1]])
+					#errG = netG_train([target['train']['in'][idx0:idx1]])
+					#errG = netG_train([target['train']['in'][idx0:idx1]])
 					
 					self.metricsG['train']['loss'] += errG
 
