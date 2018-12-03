@@ -51,7 +51,7 @@ def G(fn_generate, X):
 
 def stats_print(x):
 	print(np.min(x),np.max(x),np.average(x),x.dtype)
-def domain_data_load(domain):
+def domain_data_load(domain,validating=0):
 
 	path='../wildfire_fcn/src/patch_extract2/compact/'+domain['dataset']+'/'
 	domain['train']={}
@@ -60,18 +60,25 @@ def domain_data_load(domain):
 	domain['train']['label']=np.load(path+"train_label.npy")
 	domain['test']['in']=np.load(path+"test_im.npy")
 	domain['test']['label']=np.load(path+"test_label.npy")
+			
 	deb.prints(domain['train']['in'].shape)
 	deb.prints(domain['train']['label'].shape)
 
 
 	deb.prints(np.unique(domain['train']['label'],return_counts=True))
 	deb.prints(np.unique(domain['test']['label'],return_counts=True))
-
+	
 	
 	domain['train']['label']=batch_label_to_one_hot(domain['train']['label'],class_n=class_n)
 	domain['test']['label']=batch_label_to_one_hot(domain['test']['label'],class_n=class_n)
 	deb.prints(domain['train']['label'].shape)
 
+	if validating==1:
+		domain['val']={}
+		domain['val']['in']=np.load(path+"val_im.npy")
+		domain['val']['label']=np.load(path+"val_label.npy")
+		deb.prints(np.unique(domain['val']['label'],return_counts=True))	
+		domain['val']['label']=batch_label_to_one_hot(domain['val']['label'],class_n=class_n)
 
 	domain['loss_weights']=loss_weights_estimate(domain,bcknd_ignore=True,class_n=class_n)
 	return domain
@@ -164,9 +171,12 @@ def metrics_get(data,ignore_bcknd=True,debug=1): #requires batch['prediction'],b
 	print("Acc",acc)
 	print("AA",np.average(acc))
 	print("OA",np.sum(confusion_matrix_.diagonal())/np.sum(confusion_matrix_))
+	print("F1",metrics['f1_score'])
+	print("F1_weighted",metrics['f1_score_weighted'])
+	
 	print(confusion_matrix_)
 
-
+	return metrics
 
 
 def loss_weights_estimate(data,class_n,bcknd_ignore=True):
@@ -476,7 +486,27 @@ class ADDA():
 				index = idx
 				break
 		return index		
-	def discriminator_train(self, source,target, source_weights=None, src_discriminator=None, tgt_discriminator=None, epochs=2000, batch_size=6, save_interval=1, start_epoch=0, num_batches=100):   
+	def early_stop_check(self,metrics,epoch,most_important='overall_acc'):
+		deb.prints(metrics[most_important])
+
+		if metrics[most_important]>=self.early_stop['best'] and self.early_stop["signal"]==False:
+			self.early_stop['best']=metrics[most_important]
+			self.early_stop['count']=0
+			print("Best metric updated")
+			self.early_stop['best_updated']=True
+			#data.im_reconstruct(subset='test',mode='prediction')
+		else:
+			self.early_stop['best_updated']=False
+			self.early_stop['count']+=1
+			deb.prints(self.early_stop['count'])
+			if self.early_stop["count"]>=self.early_stop["patience"]:
+				self.early_stop["signal"]=True
+
+	def discriminator_train(self, source,target, 
+		source_weights=None, src_discriminator=None, 
+		tgt_discriminator=None, epochs=2000, batch_size=6, 
+		save_interval=1, start_epoch=0, num_batches=100,
+		target_validating=1, patience=5):   
 		
 		use_lsgan = True
 		lrD = 2e-4
@@ -578,13 +608,14 @@ class ADDA():
 		errD_sum = errG_sum = 0
 
 
-		batch = {'train': {}, 'test': {}}
-		self.batch={'train':{},'test':{}}
-		self.metricsG={'train':{},'test':{}}
-		self.metricsD={'train':{},'test':{}}
+		batch = {'train': {}, 'test': {},'val':{}}
+		self.batch={'train':{},'test':{},'val':{}}
+		self.metricsG={'train':{},'test':{},'val':{}}
+		self.metricsD={'train':{},'test':{},'val':{}}
 		
 		self.batch['train']['size']=batch_size
 		self.batch['test']['size']=batch_size
+		self.batch['val']['size']=batch_size
 		
 		smallest_sample_n_from_domains=source['train']['in'].shape[0] \
 			if (source['train']['in'].shape[0]<target['train']['in'].shape[0]) \
@@ -600,12 +631,20 @@ class ADDA():
 			data['label']=data['label'][idxs]
 			return data
 		self.batch['test']['n'] = source['test']['in'].shape[0] // self.batch['test']['size']		
+		
 		deb.prints(self.batch['test']['n'])
 		training=True
-		validating=False
+		#target_validating=False
+		
+		# Early stop init ===========
+		self.early_stop={}
+		self.early_stop['signal']=False
+		self.early_stop['best']=0
+		self.early_stop["patience"]=patience
+
 		for epoch in range(epochs):
 
-			if training:
+			if training==True:
 				# ============ TRAIN LOOP ============================== #
 				
 				source['train']=data_random_permutation(source['train'])
@@ -646,15 +685,14 @@ class ADDA():
 				discriminator.save_weights('discriminator.h5')
 			else:
 				print("Skipped training")
-			if source_testing==True:
-				source['test']['prediction']=np.zeros_like(source['test']['label'])
-				deb.prints(source['test']['prediction'].shape)
-			if target_testing==True:
-				target['test']['prediction']=np.zeros_like(target['test']['label'])
-				deb.prints(target['test']['prediction'].shape)
 			
-			# ============ TEST LOOP ============================== #
-			if validating==True:			
+			# ============ VAL LOOP ============================== #
+			deb.prints(target_validating)
+			if target_validating==1:		
+				print("VALIDATING")	
+
+				target['val']['prediction']=np.zeros_like(target['val']['label'])
+				deb.prints(target['val']['prediction'].shape)
 				self.batch['val']['n'] = target['val']['in'].shape[0] // self.batch['val']['size']
 				deb.prints(self.batch['val']['n'])
 
@@ -664,9 +702,20 @@ class ADDA():
 					target['val']['prediction'][idx0:idx1]=np.squeeze(G(
 						target['fn_classify'], target['val']['in'][idx0:idx1]))
 				deb.prints(target['val']['label'].shape)		
-				metrics=metrics_get(target['val'],debug=1)
+				metrics_val=metrics_get(target['val'],debug=1)
+			
+				self.early_stop_check(metrics_val,epoch)
 
+			
 			# ============ TEST LOOP ============================== #
+			
+			if source_testing==True:
+				source['test']['prediction']=np.zeros_like(source['test']['label'])
+				deb.prints(source['test']['prediction'].shape)
+			if target_testing==True:
+				target['test']['prediction']=np.zeros_like(target['test']['label'])
+				deb.prints(target['test']['prediction'].shape)
+
 			if target_testing==True:			
 				self.batch['test']['n'] = target['test']['in'].shape[0] // self.batch['test']['size']
 				deb.prints(self.batch['test']['n'])
@@ -696,6 +745,20 @@ class ADDA():
 			deb.prints(idx1)
 			print("Epoch={}".format(epoch))	
 
+			# =================== EARLY STOP CHECK ========================
+
+			if self.early_stop['best_updated']==True:
+				self.early_stop['best_predictions']=target['test']['prediction']
+				target['encoder'].save_weights('target_encoder_best.h5')
+				discriminator.save_weights('discriminator_best.h5')
+#				.save_weights('weights_best.h5')
+			print(self.early_stop['signal'])
+			if self.early_stop["signal"]==True:
+				print("EARLY STOP EPOCH",epoch,metrics)
+				np.save("prediction.npy",self.early_stop['best_predictions'])
+				np.save("labels.npy",target['test']['label'])
+				break
+		
 
 
 
@@ -763,8 +826,11 @@ if __name__ == '__main__':
 	ap.add_argument('-sds', '--source_dataset', default="para", help="Path to source dataset")
 	ap.add_argument('-tds', '--target_dataset', default="acre", help="Path to target dataset")
 	ap.add_argument('-ting', '--testing', default=1, help="Path to target dataset")
+	ap.add_argument('-advval', '--adversarial_validating', type=int,default=1, help="Path to target dataset")
+	
 	args = ap.parse_args()
 	
+
 	# ========= Define data sources =====================
 	
 	def load_data(file_pattern):
@@ -855,7 +921,8 @@ if __name__ == '__main__':
 	else:
 		
 		source=domain_data_load({"dataset":args.source_dataset})
-		target=domain_data_load({"dataset":args.target_dataset})
+		target=domain_data_load({"dataset":args.target_dataset},
+			validating=args.adversarial_validating)
 				
 
 
@@ -886,7 +953,8 @@ if __name__ == '__main__':
 		adda.discriminator_train(epochs=args.discriminator_epochs, 
 										source_weights=args.source_weights, 
 										source=source, target=target, 
-										start_epoch=args.start_epoch-1)
+										start_epoch=args.start_epoch-1,
+										target_validating=args.adversarial_validating)
 	if args.eval_target_classifier is not None:
 		adda.eval_target_classifier(args.eval_source_classifier, args.eval_target_classifier)
 	
