@@ -602,6 +602,7 @@ class ADDA():
 		self.batch['test']['n'] = source['test']['in'].shape[0] // self.batch['test']['size']		
 		deb.prints(self.batch['test']['n'])
 		training=True
+		validating=False
 		for epoch in range(epochs):
 
 			if training:
@@ -652,7 +653,19 @@ class ADDA():
 				target['test']['prediction']=np.zeros_like(target['test']['label'])
 				deb.prints(target['test']['prediction'].shape)
 			
-			
+			# ============ TEST LOOP ============================== #
+			if validating==True:			
+				self.batch['val']['n'] = target['val']['in'].shape[0] // self.batch['val']['size']
+				deb.prints(self.batch['val']['n'])
+
+				for batch_id in range(0, self.batch['val']['n']):
+					idx0 = batch_id*self.batch['val']['size']
+					idx1 = (batch_id+1)*self.batch['val']['size']
+					target['val']['prediction'][idx0:idx1]=np.squeeze(G(
+						target['fn_classify'], target['val']['in'][idx0:idx1]))
+				deb.prints(target['val']['label'].shape)		
+				metrics=metrics_get(target['val'],debug=1)
+
 			# ============ TEST LOOP ============================== #
 			if target_testing==True:			
 				self.batch['test']['n'] = target['test']['in'].shape[0] // self.batch['test']['size']
