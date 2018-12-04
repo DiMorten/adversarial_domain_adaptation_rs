@@ -7,7 +7,7 @@ from keras.layers.advanced_activations import LeakyReLU
 from keras.layers.convolutional import UpSampling2D, Conv2D
 from keras.models import Sequential, Model, clone_model
 from keras.preprocessing.image import ImageDataGenerator
-from keras.optimizers import Adam
+from keras.optimizers import Adam, Adagrad
 from keras import regularizers
 from keras.utils import np_utils
 import keras.backend as K
@@ -32,6 +32,8 @@ import cv2
 import deb
 from keras_weighted_categorical_crossentropy import weighted_categorical_crossentropy, sparse_accuracy_ignoring_last_label
 from keras.initializers import RandomNormal
+
+from densnet import DenseNetFCN
 
 t0 = time.time()
 class_n=3
@@ -227,20 +229,28 @@ class ADDA():
 		conv2d_prefix="conv2d_e"
 		self.source_encoder = Sequential()
 		inp = Input(shape=self.img_shape)
-		x = Conv2D(32, kernel_size=(3, 3), activation='relu', input_shape=self.img_shape, padding='same', name=conv2d_prefix+str(count))(inp)
-		count+=1
-		x = Conv2D(64, kernel_size=(3, 3), activation='relu', padding='same', name=conv2d_prefix+str(count))(x)
-		count+=1
-		#x = MaxPooling2D(pool_size=(2, 2))(x)
-		#x = Conv2D(256, kernel_size=(3, 3), activation='relu', padding='same')(x)
-		x = Conv2D(128, kernel_size=(3, 3), activation='relu', padding='same', \
-			name=conv2d_prefix+str(count))(x)
-		#x = Conv2D(64, kernel_size=(3, 3), activation='relu', padding='same')(x)
-		#x = MaxPooling2D(pool_size=(2, 2))(x)
-		#x = Conv2D(128, kernel_size=(3, 3), activation='relu', input_shape=self.img_shape, padding='same')(inp)
-		#x = Conv2D(64, kernel_size=(3, 3), activation='relu', padding='same')(x)
-		#x = Conv2D(32, kernel_size=(3, 3), activation='relu', padding='same')(x)
-		#x = MaxPooling2D(pool_size=(2, 2))(x)
+		mode=1
+		if mode==1:
+			
+			x = Conv2D(32, kernel_size=(3, 3), activation='relu', input_shape=self.img_shape, padding='same', name=conv2d_prefix+str(count))(inp)
+			count+=1
+			x = Conv2D(64, kernel_size=(3, 3), activation='relu', padding='same', name=conv2d_prefix+str(count))(x)
+			count+=1
+			#x = MaxPooling2D(pool_size=(2, 2))(x)
+			#x = Conv2D(256, kernel_size=(3, 3), activation='relu', padding='same')(x)
+			x = Conv2D(128, kernel_size=(3, 3), activation='relu', padding='same', \
+				name=conv2d_prefix+str(count))(x)
+			#x = Conv2D(64, kernel_size=(3, 3), activation='relu', padding='same')(x)
+			#x = MaxPooling2D(pool_size=(2, 2))(x)
+			#x = Conv2D(128, kernel_size=(3, 3), activation='relu', input_shape=self.img_shape, padding='same')(inp)
+			#x = Conv2D(64, kernel_size=(3, 3), activation='relu', padding='same')(x)
+			#x = Conv2D(32, kernel_size=(3, 3), activation='relu', padding='same')(x)
+			#x = MaxPooling2D(pool_size=(2, 2))(x)
+		elif mode==2:
+			x = DenseNetFCN(self.img_shape, nb_dense_block=2, growth_rate=16, dropout_rate=0.2,
+					nb_layers_per_block=2, upsampling_type='deconv', classes=self.class_n, 
+					activation='softmax', batchsize=32,input_tensor=inp,
+					include_top=False)
 		if model_return==False:
 			self.source_encoder = Model(inputs=(inp), outputs=(x))
 			
@@ -250,6 +260,7 @@ class ADDA():
 				self.source_encoder.load_weights(weights, by_name=True)
 		if model_return==True:
 			return Model(inputs=(inp), outputs=(x))
+
 
 	def define_target_encoder(self, weights=None):
 		
@@ -362,9 +373,10 @@ class ADDA():
 		return disc
 
 	def source_model_train(self, model, data, batch_size=6, epochs=2000, \
-		save_interval=1, start_epoch=0,training=True,testing=1):
+		save_interval=1, start_epoch=0,training=True,testing=1,
+		weights_save=False):
 
-		
+		self.weights_save=weights_save
 		# Define source data generator
 		#batch_generator={}
 		#batch_generator['in']=minibatch(data['in'], batch_size)
@@ -444,8 +456,8 @@ class ADDA():
 
 
 				# ================= SAVE WEIGHTS ===============
-
-				model.save_weights(self.source_weights_path+'source_weights_'+data['dataset']+'.h5')
+				if self.weights_save==True:
+					model.save_weights(self.source_weights_path+'source_weights_'+data['dataset']+'.h5')
 			else:
 				print("Training was skipped")
 			#==========================TEST LOOP================================================#
@@ -640,10 +652,11 @@ class ADDA():
 		#target_validating=False
 		
 		# Early stop init ===========
-		self.early_stop={}
-		self.early_stop['signal']=False
-		self.early_stop['best']=0
-		self.early_stop["patience"]=patience
+	
+		self.early_stop={'best':0,
+					'count':0,
+					'signal':False,
+					'patience':patience}
 
 		for epoch in range(epochs):
 
@@ -670,8 +683,8 @@ class ADDA():
 					self.metricsD['train']['loss'] += netD_train([source['train']['in'][idx0:idx1],
 								target['train']['in'][idx0:idx1]])
 
-					err_segmentation = netC_train([source['train']['in'][idx0:idx1],
-						source['train']['label'][idx0:idx1]])
+					#err_segmentation = netC_train([source['train']['in'][idx0:idx1],
+					#	source['train']['label'][idx0:idx1]])
 					#err_segmentation = netC_train([source['train']['in'][idx0:idx1],
 					#	source['train']['label'][idx0:idx1]])
 					#err_segmentation = netC_train([source['train']['in'][idx0:idx1],
@@ -713,7 +726,10 @@ class ADDA():
 
 			
 			# ============ TEST LOOP ============================== #
-			test_signal=self.early_stop['best_updated'] 
+			if target_validating==True:
+				test_signal=self.early_stop['best_updated'] 
+			else:
+				test_signal=True
 
 			if test_signal==True:
 				if source_testing==True:
@@ -754,17 +770,18 @@ class ADDA():
 
 			# =================== EARLY STOP CHECK ========================
 
-			if self.early_stop['best_updated']==True:
-				self.early_stop['best_predictions']=target['test']['prediction']
-				target['encoder'].save_weights('target_encoder_best.h5')
-				discriminator.save_weights('discriminator_best.h5')
-#				.save_weights('weights_best.h5')
-			print(self.early_stop['signal'])
-			if self.early_stop["signal"]==True:
-				print("EARLY STOP EPOCH",epoch,metrics)
-				np.save("prediction.npy",self.early_stop['best_predictions'])
-				np.save("labels.npy",target['test']['label'])
-				break
+			if target_validating==True:
+				if self.early_stop['best_updated']==True:
+					self.early_stop['best_predictions']=target['test']['prediction']
+					target['encoder'].save_weights('target_encoder_best.h5')
+					discriminator.save_weights('discriminator_best.h5')
+	#				.save_weights('weights_best.h5')
+				print(self.early_stop['signal'])
+				if self.early_stop["signal"]==True:
+					print("EARLY STOP EPOCH",epoch,metrics)
+					np.save("prediction.npy",self.early_stop['best_predictions'])
+					np.save("labels.npy",target['test']['label'])
+					break
 		
 
 
@@ -833,7 +850,8 @@ if __name__ == '__main__':
 	ap.add_argument('-sds', '--source_dataset', default="para", help="Path to source dataset")
 	ap.add_argument('-tds', '--target_dataset', default="acre", help="Path to target dataset")
 	ap.add_argument('-ting', '--testing', default=1, help="Path to target dataset")
-	ap.add_argument('-advval', '--adversarial_validating', type=int,default=1, help="Path to target dataset")
+	ap.add_argument('-advval', '--adversarial_validating', type=int,default=0, help="Path to target dataset")
+	ap.add_argument('-ws', '--weights_save', type=bool,default=True, help="Save weights during source training")
 	
 	args = ap.parse_args()
 	
@@ -949,10 +967,10 @@ if __name__ == '__main__':
 		if args.eval_source_classifier is None:
 			adda.source_model_train(source_model, data=source, \
 				start_epoch=args.start_epoch-1,
-				testing=args.testing) 
+				testing=args.testing,weights_save=args.weights_save) 
 		else:
 			adda.source_model_train(source_model, data=source, training=False, \
-				start_epoch=args.start_epoch-1)
+				start_epoch=args.start_epoch-1,weights_save=args.weights_save)
 			
 	adda.define_target_encoder(args.source_weights)
 	
