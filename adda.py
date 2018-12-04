@@ -157,26 +157,26 @@ def metrics_get(data,ignore_bcknd=True,debug=1): #requires batch['prediction'],b
 	print(labels.shape,labels.dtype)
 
 	metrics={}
-	metrics['f1_score']=f1_score(labels,predictions,average='macro')
+	metrics['f1_score']=f1_score(labels,predictions,average=None)
 	metrics['f1_score_weighted']=f1_score(labels,predictions,average='weighted')
 			
 	metrics['overall_acc']=accuracy_score(labels,predictions)
-	confusion_matrix_=confusion_matrix(labels,predictions)
-	metrics['per_class_acc']=(confusion_matrix_.astype('float') / confusion_matrix_.sum(axis=1)[:, np.newaxis]).diagonal()
+	metrics['confusion_matrix']=confusion_matrix(labels,predictions)
+	metrics['per_class_acc']=(metrics['confusion_matrix'].astype('float') / metrics['confusion_matrix'].sum(axis=1)[:, np.newaxis]).diagonal()
 	print("acc",metrics['per_class_acc'])
 
-	print(confusion_matrix_.sum(axis=1)[:, np.newaxis].diagonal())
-	print(confusion_matrix_.diagonal())
-	print(np.sum(confusion_matrix_,axis=1))
-	acc=confusion_matrix_.diagonal()/np.sum(confusion_matrix_,axis=1)
+	print(metrics['confusion_matrix'].sum(axis=1)[:, np.newaxis].diagonal())
+	print(metrics['confusion_matrix'].diagonal())
+	print(np.sum(metrics['confusion_matrix'],axis=1))
+	acc=metrics['confusion_matrix'].diagonal()/np.sum(metrics['confusion_matrix'],axis=1)
 	acc=acc[~np.isnan(acc)]
 	print("Acc",acc)
 	print("AA",np.average(acc))
-	print("OA",np.sum(confusion_matrix_.diagonal())/np.sum(confusion_matrix_))
+	print("OA",np.sum(metrics['confusion_matrix'].diagonal())/np.sum(metrics['confusion_matrix']))
 	print("F1",metrics['f1_score'])
 	print("F1_weighted",metrics['f1_score_weighted'])
 	
-	print(confusion_matrix_)
+	print(metrics['confusion_matrix'])
 
 	return metrics
 
@@ -658,6 +658,9 @@ class ADDA():
 					'signal':False,
 					'patience':patience}
 
+		self.metricsG['train']['loss'] = np.zeros((1, 2))
+		self.metricsD['train']['loss'] = np.zeros((1, 2))
+		deb.prints(self.metricsD['train']['loss'])
 		for epoch in range(epochs):
 
 			if training==True:
@@ -666,8 +669,14 @@ class ADDA():
 				source['train']=data_random_permutation(source['train'])
 				target['train']=data_random_permutation(target['train'])
 				
+				if self.metricsG['train']['loss'][0][0]>self.metricsD['train']['loss'][0][0]:
+					D_training=False
+				else:
+					D_training=True
+				deb.prints(D_training)
 				self.metricsG['train']['loss'] = np.zeros((1, 2))
-				self.metricsD['train']['loss'] = np.zeros((1, 2))
+				if D_training==True:
+					self.metricsD['train']['loss'] = np.zeros((1, 2))
 				err_segmentation = np.zeros((1, 2))
 				for batch_id in range(0, self.batch['train']['n']):
 					idx0 = batch_id*self.batch['train']['size']
@@ -680,18 +689,20 @@ class ADDA():
 					
 					self.metricsG['train']['loss'] += errG
 
-					self.metricsD['train']['loss'] += netD_train([source['train']['in'][idx0:idx1],
-								target['train']['in'][idx0:idx1]])
+					if D_training==True:
+						self.metricsD['train']['loss'] += netD_train([source['train']['in'][idx0:idx1],
+									target['train']['in'][idx0:idx1]])
 
 					#err_segmentation = netC_train([source['train']['in'][idx0:idx1],
 					#	source['train']['label'][idx0:idx1]])
 					#err_segmentation = netC_train([source['train']['in'][idx0:idx1],
 					#	source['train']['label'][idx0:idx1]])
-					#err_segmentation = netC_train([source['train']['in'][idx0:idx1],
-					#	source['train']['label'][idx0:idx1]])
+					err_segmentation = netC_train([source['train']['in'][idx0:idx1],
+						source['train']['label'][idx0:idx1]])
 
 				self.metricsG['train']['loss'] /= self.batch['train']['n'] 
-				self.metricsD['train']['loss'] /= self.batch['train']['n'] 
+				if D_training==True:
+					self.metricsD['train']['loss'] /= self.batch['train']['n'] 
 				
 				print("Epoch: {}. G_loss: {}. D_loss: {}.".format(epoch,
 					self.metricsG['train']['loss'],
