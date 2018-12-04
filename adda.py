@@ -506,12 +506,15 @@ class ADDA():
 		source_weights=None, src_discriminator=None, 
 		tgt_discriminator=None, epochs=2000, batch_size=6, 
 		save_interval=1, start_epoch=0, num_batches=100,
-		target_validating=1, patience=5):   
+		target_validating=1, patience=10):   
 		
 		use_lsgan = True
 		lrD = 2e-4
+		#lrG = 2e-4
 		lrG = 2e-4
 
+
+		#lrD = lrG = 0.0001
 		λ = 1
 
 		source['encoder']=self.define_source_encoder(model_return=True)
@@ -658,9 +661,9 @@ class ADDA():
 					idx1 = (batch_id+1)*self.batch['train']['size']
 
 					errG = netG_train([target['train']['in'][idx0:idx1]])
-					#errG = netG_train([target['train']['in'][idx0:idx1]])
-					#errG = netG_train([target['train']['in'][idx0:idx1]])
-					#errG = netG_train([target['train']['in'][idx0:idx1]])
+					errG = netG_train([target['train']['in'][idx0:idx1]])
+					errG = netG_train([target['train']['in'][idx0:idx1]])
+					errG = netG_train([target['train']['in'][idx0:idx1]])
 					
 					self.metricsG['train']['loss'] += errG
 
@@ -704,41 +707,45 @@ class ADDA():
 				deb.prints(target['val']['label'].shape)		
 				metrics_val=metrics_get(target['val'],debug=1)
 			
+				#self.early_stop_check(metrics_val,epoch,most_important='f1_score')
 				self.early_stop_check(metrics_val,epoch)
 
+
 			
 			# ============ TEST LOOP ============================== #
-			
-			if source_testing==True:
-				source['test']['prediction']=np.zeros_like(source['test']['label'])
-				deb.prints(source['test']['prediction'].shape)
-			if target_testing==True:
-				target['test']['prediction']=np.zeros_like(target['test']['label'])
-				deb.prints(target['test']['prediction'].shape)
+			test_signal=self.early_stop['best_updated'] 
 
-			if target_testing==True:			
-				self.batch['test']['n'] = target['test']['in'].shape[0] // self.batch['test']['size']
-				deb.prints(self.batch['test']['n'])
+			if test_signal==True:
+				if source_testing==True:
+					source['test']['prediction']=np.zeros_like(source['test']['label'])
+					deb.prints(source['test']['prediction'].shape)
+				if target_testing==True:
+					target['test']['prediction']=np.zeros_like(target['test']['label'])
+					deb.prints(target['test']['prediction'].shape)
 
-				for batch_id in range(0, self.batch['test']['n']):
-					idx0 = batch_id*self.batch['test']['size']
-					idx1 = (batch_id+1)*self.batch['test']['size']
-					target['test']['prediction'][idx0:idx1]=np.squeeze(G(
-						target['fn_classify'], target['test']['in'][idx0:idx1]))
-				deb.prints(target['test']['label'].shape)		
-				metrics=metrics_get(target['test'],debug=1)
+				if target_testing==True:			
+					self.batch['test']['n'] = target['test']['in'].shape[0] // self.batch['test']['size']
+					deb.prints(self.batch['test']['n'])
 
-			# ============ TEST LOOP ============================== #
-			if source_testing==True:	
-				
+					for batch_id in range(0, self.batch['test']['n']):
+						idx0 = batch_id*self.batch['test']['size']
+						idx1 = (batch_id+1)*self.batch['test']['size']
+						target['test']['prediction'][idx0:idx1]=np.squeeze(G(
+							target['fn_classify'], target['test']['in'][idx0:idx1]))
+					deb.prints(target['test']['label'].shape)		
+					metrics=metrics_get(target['test'],debug=1)
 
-				for batch_id in range(0, self.batch['test']['n']):
-					idx0 = batch_id*self.batch['test']['size']
-					idx1 = (batch_id+1)*self.batch['test']['size']
-					source['test']['prediction'][idx0:idx1]=np.squeeze(G(
-						source['fn_classify'], source['test']['in'][idx0:idx1]))
-				deb.prints(source['test']['label'].shape)		
-				metrics=metrics_get(source['test'],debug=1)
+				# ============ TEST LOOP ============================== #
+				if source_testing==True:	
+					
+
+					for batch_id in range(0, self.batch['test']['n']):
+						idx0 = batch_id*self.batch['test']['size']
+						idx1 = (batch_id+1)*self.batch['test']['size']
+						source['test']['prediction'][idx0:idx1]=np.squeeze(G(
+							source['fn_classify'], source['test']['in'][idx0:idx1]))
+					deb.prints(source['test']['label'].shape)		
+					metrics=metrics_get(source['test'],debug=1)
 
 
 			#====================METRICS GET================================================#
