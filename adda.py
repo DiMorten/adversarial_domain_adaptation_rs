@@ -506,7 +506,7 @@ class ADDA():
 		source_weights=None, src_discriminator=None, 
 		tgt_discriminator=None, epochs=2000, batch_size=6, 
 		save_interval=1, start_epoch=0, num_batches=100,
-		target_validating=1, patience=10):   
+		target_validating=1, patience=5):   
 		
 		use_lsgan = True
 		lrD = 2e-4
@@ -661,17 +661,17 @@ class ADDA():
 					idx1 = (batch_id+1)*self.batch['train']['size']
 
 					errG = netG_train([target['train']['in'][idx0:idx1]])
-					errG = netG_train([target['train']['in'][idx0:idx1]])
-					errG = netG_train([target['train']['in'][idx0:idx1]])
-					errG = netG_train([target['train']['in'][idx0:idx1]])
+					#errG = netG_train([target['train']['in'][idx0:idx1]])
+					#errG = netG_train([target['train']['in'][idx0:idx1]])
+					#errG = netG_train([target['train']['in'][idx0:idx1]])
 					
 					self.metricsG['train']['loss'] += errG
 
 					self.metricsD['train']['loss'] += netD_train([source['train']['in'][idx0:idx1],
 								target['train']['in'][idx0:idx1]])
 
-					#err_segmentation = netC_train([source['train']['in'][idx0:idx1],
-					#	source['train']['label'][idx0:idx1]])
+					err_segmentation = netC_train([source['train']['in'][idx0:idx1],
+						source['train']['label'][idx0:idx1]])
 					#err_segmentation = netC_train([source['train']['in'][idx0:idx1],
 					#	source['train']['label'][idx0:idx1]])
 					#err_segmentation = netC_train([source['train']['in'][idx0:idx1],
