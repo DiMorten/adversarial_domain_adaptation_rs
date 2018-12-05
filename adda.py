@@ -222,6 +222,14 @@ class ADDA():
 		self.tgt_optimizer = Adam(lr, 0.5)
 		self.class_n=class_n
 		self.source_weights_path='results/'
+		#self.encoder_type='densenet' #'basic'
+		self.encoder_type='basic'
+		self.init_filters = 128 if self.encoder_type=='basic' else 112
+		deb.prints(self.init_filters)
+		if self.encoder_type=='densenet':
+			self.src_optimizer=Adagrad(0.01)
+
+		
 	def define_source_encoder(self, weights=None,model_return=False):
 	
 		#self.source_encoder = keras.applications.vgg16.VGG16(include_top=False, weights='imagenet', input_shape=self.img_shape, pooling=None, classes=10)
@@ -229,9 +237,9 @@ class ADDA():
 		conv2d_prefix="conv2d_e"
 		self.source_encoder = Sequential()
 		inp = Input(shape=self.img_shape)
-		mode=1
-		if mode==1:
-			
+	
+		if self.encoder_type=='basic':
+			print("Encoder: Basic")
 			x = Conv2D(32, kernel_size=(3, 3), activation='relu', input_shape=self.img_shape, padding='same', name=conv2d_prefix+str(count))(inp)
 			count+=1
 			x = Conv2D(64, kernel_size=(3, 3), activation='relu', padding='same', name=conv2d_prefix+str(count))(x)
@@ -246,7 +254,8 @@ class ADDA():
 			#x = Conv2D(64, kernel_size=(3, 3), activation='relu', padding='same')(x)
 			#x = Conv2D(32, kernel_size=(3, 3), activation='relu', padding='same')(x)
 			#x = MaxPooling2D(pool_size=(2, 2))(x)
-		elif mode==2:
+		elif self.encoder_type=='densenet':
+			print("Encoder: Densenet")
 			x = DenseNetFCN(self.img_shape, nb_dense_block=2, growth_rate=16, dropout_rate=0.2,
 					nb_layers_per_block=2, upsampling_type='deconv', classes=self.class_n, 
 					activation='softmax', batchsize=32,input_tensor=inp,
@@ -306,10 +315,11 @@ class ADDA():
 
 	def define_discriminator(self, shape, model_return=False):
 		
+		
 		inp = Input(shape=shape)
 		
 		x = Flatten()(inp)
-		x = Dense(128, activation=LeakyReLU(alpha=0.3), kernel_regularizer=regularizers.l2(0.01), name='discriminator1')(x)
+		x = Dense(self.init_filters, activation=LeakyReLU(alpha=0.3), kernel_regularizer=regularizers.l2(0.01), name='discriminator1')(x)
 		
 		x = Dense(2, activation='sigmoid', name='discriminator2')(x)
 		
@@ -374,7 +384,9 @@ class ADDA():
 
 	def source_model_train(self, model, data, batch_size=6, epochs=2000, \
 		save_interval=1, start_epoch=0,training=True,testing=1,
-		weights_save=False):
+		weights_save=False,validating=False,patience=5):
+		deb.prints(validating)
+		batch_size=6
 
 		self.weights_save=weights_save
 		# Define source data generator
@@ -415,14 +427,24 @@ class ADDA():
 		niter=150
 		diplay_iters=200
 
-		batch = {'train': {}, 'test': {}}
-		self.batch={'train':{},'test':{}}
-		self.metrics={'train':{},'test':{}}
+		batch = {'train': {}, 'test': {}, 'val':{}}
+		self.batch={'train':{},'test':{}, 'val':{}}
+		self.metrics={'train':{},'test':{}, 'val':{}}
 		self.batch['train']['size']=batch_size
-		self.batch['test']['size']=batch_size
+		self.batch['test']['size']=2000
+
 		
 		self.batch['train']['n'] = data['train']['in'].shape[0] // self.batch['train']['size']
 		self.batch['test']['n'] = data['test']['in'].shape[0] // self.batch['test']['size']
+
+		if validating==True:
+			self.batch['val']['size']=batch_size
+			self.batch['val']['n'] = data['val']['in'].shape[0] // self.batch['val']['size']
+			self.early_stop={'best':0,
+					'count':0,
+					'signal':False,
+					'patience':patience}
+			deb.prints(self.batch['val']['n'])
 
 		deb.prints(self.batch['train']['n'])
 		deb.prints(self.batch['test']['n'])
@@ -431,6 +453,8 @@ class ADDA():
 		if self.training==False:
 			niter=1
 
+
+		
 		for epoch in range(niter):
 
 			
@@ -460,6 +484,31 @@ class ADDA():
 					model.save_weights(self.source_weights_path+'source_weights_'+data['dataset']+'.h5')
 			else:
 				print("Training was skipped")
+			# ============ VAL LOOP ============================== #
+
+			if validating==True:
+				self.metrics['val']['loss']=np.zeros((1,2))
+				data['val']['prediction']=np.zeros_like(data['val']['label'])
+				self.batch_test_stats=True
+
+				for batch_id in range(0, self.batch['val']['n']):
+					idx0 = batch_id*self.batch['val']['size']
+					idx1 = (batch_id+1)*self.batch['val']['size']
+
+					batch['val']['in'] = data['val']['in'][idx0:idx1]
+					batch['val']['label'] = data['val']['label'][idx0:idx1]
+
+					if self.batch_test_stats:
+						self.metrics['val']['loss'] += model.test_on_batch(
+							batch['val']['in'], batch['val']['label'])        # Accumulated epoch
+
+					data['val']['prediction'][idx0:idx1]=model.predict(
+						batch['val']['in'],batch_size=self.batch['val']['size'])
+				metrics_val=metrics_get(data['val'],debug=1)
+			
+				#self.early_stop_check(metrics_val,epoch,most_important='f1_score')
+				self.early_stop_check(metrics_val,epoch)
+
 			#==========================TEST LOOP================================================#
 			if testing==1:
 				data['test']['prediction']=np.zeros_like(data['test']['label'])
@@ -491,6 +540,17 @@ class ADDA():
 				
 				metrics=metrics_get(data['test'],debug=1)
 
+			# if validating==True:
+			# 	if self.early_stop['best_updated']==True:
+			# 		self.early_stop['best_predictions']=data['test']['prediction']
+			# 		model.save_weights('source_encoder_para_vl.h5')
+					
+			# 	print(self.early_stop['signal'])
+			# 	if self.early_stop["signal"]==True:
+			# 		print("EARLY STOP EPOCH",epoch,metrics)
+			# 		np.save("prediction.npy",self.early_stop['best_predictions'])
+			# 		np.save("labels.npy",data['test']['label'])
+			# 		break
 	def layer_id_from_name_get(self,model,name):
 		index = None
 		for idx, layer in enumerate(model.layers):
@@ -537,7 +597,7 @@ class ADDA():
 		#discriminator  = self.define_discriminator(source['encoder'].output_shape[1:],model_return=True)
 		#discriminator = self.define_discriminator(self.channels, 64, use_sigmoid = not use_lsgan)
 		#discriminator = self.define_discriminator(128, 64, use_sigmoid = not use_lsgan)
-		discriminator = self.define_discriminator(128, 4, use_sigmoid = not use_lsgan)
+		discriminator = self.define_discriminator(self.init_filters, 4, use_sigmoid = not use_lsgan)
 
 		#target['discriminator']  = self.define_discriminator(target['encoder'].output_shape[1:],model_return=True)
 		source['encoder'].summary()
@@ -609,7 +669,10 @@ class ADDA():
 		training_updates = Adam(lr=lrD, beta_1=0.5).get_updates(D_weights,[],D_loss)
 		netD_train = K.function([source['encoder_in'],target['encoder_in']],
 								[D_loss],training_updates)
-		training_updates = Adam(lr=lrG, beta_1=0.5).get_updates(G_weights,[],G_loss)
+		if self.encoder_type=='basic':
+			training_updates = Adam(lr=lrG, beta_1=0.5).get_updates(G_weights,[],G_loss)
+		elif self.encoder_type=='densenet':
+			training_updates = Adagrad(0.01).get_updates(G_weights,[],G_loss)
 		netG_train = K.function([target['encoder_in']],[G_loss],
 								training_updates)
 		training_updates = Adam(lr=lrG, beta_1=0.5).get_updates(C_weights,[],C_loss)
@@ -737,7 +800,7 @@ class ADDA():
 
 			
 			# ============ TEST LOOP ============================== #
-			if target_validating==True:
+			if target_validating==1:
 				test_signal=self.early_stop['best_updated'] 
 			else:
 				test_signal=True
@@ -781,7 +844,7 @@ class ADDA():
 
 			# =================== EARLY STOP CHECK ========================
 
-			if target_validating==True:
+			if target_validating==1:
 				if self.early_stop['best_updated']==True:
 					self.early_stop['best_predictions']=target['test']['prediction']
 					target['encoder'].save_weights('target_encoder_best.h5')
@@ -862,10 +925,15 @@ if __name__ == '__main__':
 	ap.add_argument('-tds', '--target_dataset', default="acre", help="Path to target dataset")
 	ap.add_argument('-ting', '--testing', default=1, help="Path to target dataset")
 	ap.add_argument('-advval', '--adversarial_validating', type=int,default=0, help="Path to target dataset")
+	ap.add_argument('-sval', '--source_validating', type=bool,default=False, help="Path to target dataset")
+
 	ap.add_argument('-ws', '--weights_save', type=bool,default=True, help="Save weights during source training")
+	ap.add_argument('-w', '--window_len', type=int,default=32, help="Save weights during source training")
 	
 	args = ap.parse_args()
 	
+	args.source_validating=False
+	deb.prints(args.source_validating)
 
 	# ========= Define data sources =====================
 	
@@ -956,7 +1024,9 @@ if __name__ == '__main__':
 
 	else:
 		
-		source=domain_data_load({"dataset":args.source_dataset})
+		source_validating=1 if args.source_validating==True else 0
+		source=domain_data_load({"dataset":args.source_dataset},
+			validating=source_validating)
 		target=domain_data_load({"dataset":args.target_dataset},
 			validating=args.adversarial_validating)
 				
@@ -964,7 +1034,7 @@ if __name__ == '__main__':
 
 
 	
-	adda = ADDA(args.lr, 32, 6,class_n=class_n)
+	adda = ADDA(args.lr, args.window_len, 6,class_n=class_n)
 	print(0.1)
 	adda.define_source_encoder()
 	print(0.2)
@@ -978,7 +1048,8 @@ if __name__ == '__main__':
 		if args.eval_source_classifier is None:
 			adda.source_model_train(source_model, data=source, \
 				start_epoch=args.start_epoch-1,
-				testing=args.testing,weights_save=args.weights_save) 
+				testing=args.testing,weights_save=args.weights_save,
+				validating=args.source_validating) 
 		else:
 			adda.source_model_train(source_model, data=source, training=False, \
 				start_epoch=args.start_epoch-1,weights_save=args.weights_save)
