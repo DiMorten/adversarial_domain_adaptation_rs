@@ -697,8 +697,8 @@ class ADDA():
 					#	source['train']['label'][idx0:idx1]])
 					#err_segmentation = netC_train([source['train']['in'][idx0:idx1],
 					#	source['train']['label'][idx0:idx1]])
-					err_segmentation = netC_train([source['train']['in'][idx0:idx1],
-						source['train']['label'][idx0:idx1]])
+					#err_segmentation = netC_train([source['train']['in'][idx0:idx1],
+					#	source['train']['label'][idx0:idx1]])
 
 				self.metricsG['train']['loss'] /= self.batch['train']['n'] 
 				if D_training==True:
