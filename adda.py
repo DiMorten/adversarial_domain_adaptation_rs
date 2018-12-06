@@ -590,7 +590,7 @@ class ADDA():
 		deb.prints(data['label'].shape)		
 		metrics=metrics_get(data,debug=1)
 		#self.early_stop_check(metrics_val,epoch,most_important='f1_score')
-		return metrics
+		return metrics,data['prediction']
 	def discriminator_train(self, source,target, 
 		source_weights=None, src_discriminator=None, 
 		tgt_discriminator=None, epochs=2000, batch_size=6, 
@@ -692,8 +692,8 @@ class ADDA():
 		self.metricsD={'train':{},'test':{},'val':{}}
 		
 		self.batch['train']['size']=batch_size
-		self.batch['test']['size']=2000
-		self.batch['val']['size']=50
+		self.batch['test']['size']=batch_size
+		self.batch['val']['size']=batch_size
 		
 		smallest_sample_n_from_domains=source['train']['in'].shape[0] \
 			if (source['train']['in'].shape[0]<target['train']['in'].shape[0]) \
@@ -767,7 +767,7 @@ class ADDA():
 
 					# ============== IF EARLY VALIDATING ==============
 					if early_validating==True and batch_id%100:
-						metrics_val=self.test_loop(target['val'],
+						metrics_val,_=self.test_loop(target['val'],
 							self.batch['val'],target['fn_classify'],G)
 						self.early_stop_check(metrics_val,early_epoch,
 							most_important='average_acc')
@@ -780,11 +780,11 @@ class ADDA():
 						if self.early_stop["signal"]==True:
 							target['encoder'].load_weights('target_encoder_best.h5')
 							discriminator.load_weights('discriminator_best.h5')
-							metrics=self.test_loop(target['test'],
+							metrics,prediction=self.test_loop(target['test'],
 								self.batch['test'],target['fn_classify'],G)
 
 							print("EARLY STOP EPOCH",epoch,metrics)
-							np.save("prediction.npy",self.early_stop['best_predictions'])
+							np.save("prediction.npy",prediction)
 							np.save("labels.npy",target['test']['label'])
 							break
 						early_epoch+=1
@@ -822,11 +822,11 @@ class ADDA():
 			if test_signal==True:
 
 				if target_testing==True:
-					metrics=self.test_loop(target['test'],
+					metrics,_=self.test_loop(target['test'],
 						self.batch['test'],target['fn_classify'],G)
 
 				if source_testing==True:						
-					metrics=self.test_loop(source['test'],
+					metrics,_=self.test_loop(source['test'],
 						self.batch['test'],source['fn_classify'],G)
 
 
