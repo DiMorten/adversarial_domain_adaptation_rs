@@ -128,8 +128,7 @@ def probabilities_to_one_hot(vals):
 	out=np.zeros_like(vals)
 	out[np.arange(len(vals)), vals.argmax(1)] = 1
 	return out
-def metrics_get(data,ignore_bcknd=True,debug=1): #requires batch['prediction'],batch['label']
-	
+def metrics_get(data,ignore_bcknd=True,only_one=None,debug=1): #requires batch['prediction'],batch['label']
 
 	# ==========================IMGS FLATTEN ==========================================#
 	predictions = ims_flatten(data['prediction'])
@@ -157,29 +156,39 @@ def metrics_get(data,ignore_bcknd=True,debug=1): #requires batch['prediction'],b
 	print(labels.shape,labels.dtype)
 
 	metrics={}
-	metrics['f1_score']=f1_score(labels,predictions,average=None)
-	metrics['f1_score_avg']=np.average(metrics['f1_score'])
-	#metrics['f1_score_weighted']=f1_score(labels,predictions,average='weighted')
-			
-	metrics['overall_acc']=accuracy_score(labels,predictions)
-	metrics['confusion_matrix']=confusion_matrix(labels,predictions)
-	metrics['per_class_acc']=(metrics['confusion_matrix'].astype('float') / metrics['confusion_matrix'].sum(axis=1)[:, np.newaxis]).diagonal()
-	print("acc",metrics['per_class_acc'])
 
-	print(metrics['confusion_matrix'].sum(axis=1)[:, np.newaxis].diagonal())
-	print(metrics['confusion_matrix'].diagonal())
-	print(np.sum(metrics['confusion_matrix'],axis=1))
-	acc=metrics['confusion_matrix'].diagonal()/np.sum(metrics['confusion_matrix'],axis=1)
-	acc=acc[~np.isnan(acc)]
-	metrics['average_acc']=np.average(acc)
+	if only_one:
+		metrics['confusion_matrix']=confusion_matrix(labels,predictions)
+		acc=metrics['confusion_matrix'].diagonal()/np.sum(metrics['confusion_matrix'],axis=1)
+		acc=acc[~np.isnan(acc)]
+		metrics['average_acc']=np.average(acc)
+		print("per class acc",acc)
+		print("AA",metrics['average_acc'])
+	else:
 
-	print("Acc",acc)
-	print("AA",metrics['average_acc'])
-	print("OA",np.sum(metrics['confusion_matrix'].diagonal())/np.sum(metrics['confusion_matrix']))
-	print("F1",metrics['f1_score'])
-	print("F1_avg",metrics['f1_score_avg'])
-	
-	print(metrics['confusion_matrix'])
+		metrics['f1_score']=f1_score(labels,predictions,average=None)
+		metrics['f1_score_avg']=np.average(metrics['f1_score'])
+		#metrics['f1_score_weighted']=f1_score(labels,predictions,average='weighted')
+				
+		metrics['overall_acc']=accuracy_score(labels,predictions)
+		metrics['confusion_matrix']=confusion_matrix(labels,predictions)
+		metrics['per_class_acc']=(metrics['confusion_matrix'].astype('float') / metrics['confusion_matrix'].sum(axis=1)[:, np.newaxis]).diagonal()
+		print("acc",metrics['per_class_acc'])
+
+		print(metrics['confusion_matrix'].sum(axis=1)[:, np.newaxis].diagonal())
+		print(metrics['confusion_matrix'].diagonal())
+		print(np.sum(metrics['confusion_matrix'],axis=1))
+		acc=metrics['confusion_matrix'].diagonal()/np.sum(metrics['confusion_matrix'],axis=1)
+		acc=acc[~np.isnan(acc)]
+		metrics['average_acc']=np.average(acc)
+
+		print("Acc",acc)
+		print("AA",metrics['average_acc'])
+		print("OA",np.sum(metrics['confusion_matrix'].diagonal())/np.sum(metrics['confusion_matrix']))
+		print("F1",metrics['f1_score'])
+		print("F1_avg",metrics['f1_score_avg'])
+		
+		print(metrics['confusion_matrix'])
 
 	return metrics
 
@@ -575,7 +584,7 @@ class ADDA():
 			deb.prints(self.early_stop['count'])
 			if self.early_stop["count"]>=self.early_stop["patience"]:
 				self.early_stop["signal"]=True
-	def test_loop(self,data,batch,fn_classify,G):		
+	def test_loop(self,data,batch,fn_classify,G,metric_most_important=None):		
 
 		data['prediction']=np.zeros_like(data['label'])
 		deb.prints(data['prediction'].shape)
@@ -588,14 +597,14 @@ class ADDA():
 			data['prediction'][idx0:idx1]=np.squeeze(G(
 				fn_classify, data['in'][idx0:idx1]))
 		deb.prints(data['label'].shape)		
-		metrics=metrics_get(data,debug=1)
+		metrics=metrics_get(data,debug=1,only_one=metric_most_important)
 		#self.early_stop_check(metrics_val,epoch,most_important='f1_score')
 		return metrics
 	def discriminator_train(self, source,target, 
 		source_weights=None, src_discriminator=None, 
 		tgt_discriminator=None, epochs=2000, batch_size=6, 
 		save_interval=1, start_epoch=0, num_batches=100,
-		target_validating=1, patience=50, early_validating=True):   
+		target_validating=1, patience=200, early_validating=True):   
 		
 		use_lsgan = True
 		lrD = 2e-4
@@ -768,24 +777,26 @@ class ADDA():
 					# ============== IF EARLY VALIDATING ==============
 					if early_validating==True and batch_id%100:
 						metrics_val=self.test_loop(target['val'],
-							self.batch['val'],target['fn_classify'],G)
+							self.batch['val'],target['fn_classify'],G,
+							metric_most_important=None)
 						self.early_stop_check(metrics_val,early_epoch,
 							most_important='average_acc')
 
 						if self.early_stop['best_updated']==True:
 							print("BEST METRIC UPDATED")
-							target['encoder'].save_weights('target_encoder_best.h5')
-							discriminator.save_weights('discriminator_best.h5')
+							target['encoder'].save_weights('result_adv/target_encoder_best.h5')
+							discriminator.save_weights('result_adv/discriminator_best.h5')
 						print(self.early_stop['signal'])
+						deb.prints(self.early_stop['best'])
 						if self.early_stop["signal"]==True:
-							target['encoder'].load_weights('target_encoder_best.h5')
-							discriminator.load_weights('discriminator_best.h5')
+							target['encoder'].load_weights('result_adv/target_encoder_best.h5')
+							discriminator.load_weights('result_adv/discriminator_best.h5')
 							metrics=self.test_loop(target['test'],
 								self.batch['test'],target['fn_classify'],G)
 
 							print("EARLY STOP EPOCH",epoch,metrics)
-							np.save("prediction.npy",self.early_stop['best_predictions'])
-							np.save("labels.npy",target['test']['label'])
+							np.save("result_adv/prediction.npy",self.early_stop['best_predictions'])
+							np.save("result_adv/labels.npy",target['test']['label'])
 							break
 						early_epoch+=1
 						
