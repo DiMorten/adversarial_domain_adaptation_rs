@@ -595,7 +595,7 @@ class ADDA():
 		source_weights=None, src_discriminator=None, 
 		tgt_discriminator=None, epochs=2000, batch_size=6, 
 		save_interval=1, start_epoch=0, num_batches=100,
-		target_validating=1, patience=5, early_validating=True):   
+		target_validating=1, patience=50, early_validating=True):   
 		
 		use_lsgan = True
 		lrD = 2e-4
@@ -635,20 +635,6 @@ class ADDA():
 
 		loss_weighted = lambda output, target : -K.mean(K.log(output+1e-12)*target*weights) # Cross entropy
 
-		# def loss_weighted(y_pred, y_true, weights):
-
-
-		# 	# scale predictions so that the class probas of each sample sum to 1
-		# 	#y_pred /= K.sum(y_pred, axis=-1, keepdims=True)
-		# 	# clip to prevent NaN's and Inf's
-		# 	##y_pred = K.clip(y_pred, K.epsilon(), 1 - K.epsilon())
-		# 	# calc
-		# 	loss = y_true * K.log(y_pred) * weights
-		# 	loss = -K.sum(loss, -1)
-		# 	return loss
-
-
-		# target: 0. source: 1.
 		def classifier_variables(encoder,classifier):
 			encoder_in = encoder.inputs[0]
 			encoder_out = encoder.outputs[0]
@@ -706,8 +692,8 @@ class ADDA():
 		self.metricsD={'train':{},'test':{},'val':{}}
 		
 		self.batch['train']['size']=batch_size
-		self.batch['test']['size']=batch_size
-		self.batch['val']['size']=batch_size
+		self.batch['test']['size']=2000
+		self.batch['val']['size']=50
 		
 		smallest_sample_n_from_domains=source['train']['in'].shape[0] \
 			if (source['train']['in'].shape[0]<target['train']['in'].shape[0]) \
@@ -733,12 +719,14 @@ class ADDA():
 		self.early_stop={'best':0,
 					'count':0,
 					'signal':False,
-					'patience':patience}
+					'patience':patience,
+					'best_updated':False}
 
 		self.metricsG['train']['loss'] = np.zeros((1, 2))
 		self.metricsD['train']['loss'] = np.zeros((1, 2))
 		deb.prints(self.metricsD['train']['loss'])
 		for epoch in range(epochs):
+			early_epoch=0
 
 			if training==True:
 				# ============ TRAIN LOOP ============================== #
@@ -781,7 +769,26 @@ class ADDA():
 					if early_validating==True and batch_id%100:
 						metrics_val=self.test_loop(target['val'],
 							self.batch['val'],target['fn_classify'],G)
-						self.early_stop_check(metrics_val,epoch)
+						self.early_stop_check(metrics_val,early_epoch,
+							most_important='average_acc')
+
+						if self.early_stop['best_updated']==True:
+							print("BEST METRIC UPDATED")
+							target['encoder'].save_weights('target_encoder_best.h5')
+							discriminator.save_weights('discriminator_best.h5')
+						print(self.early_stop['signal'])
+						if self.early_stop["signal"]==True:
+							target['encoder'].load_weights('target_encoder_best.h5')
+							discriminator.load_weights('discriminator_best.h5')
+							metrics=self.test_loop(target['test'],
+								self.batch['test'],target['fn_classify'],G)
+
+							print("EARLY STOP EPOCH",epoch,metrics)
+							np.save("prediction.npy",self.early_stop['best_predictions'])
+							np.save("labels.npy",target['test']['label'])
+							break
+						early_epoch+=1
+						
 
 					# ==================================================
 				self.metricsG['train']['loss'] /= self.batch['train']['n'] 
@@ -798,11 +805,12 @@ class ADDA():
 				print("Skipped training")
 			
 			# ============ VAL LOOP ============================== #
-			deb.prints(target_validating)
-			if target_validating==1:		
-				print("VALIDATING")	
-				metrics_val=self.val_loop(target,G)
-				self.early_stop_check(metrics_val,epoch)
+			#deb.prints(target_validating)
+			#if target_validating==1:		
+			#	print("VALIDATING")	
+			#	metrics_val=self.test_loop(target['val'],
+			#		self.batch['val'],target['fn_classify'],G)
+			#	self.early_stop_check(metrics_val,epoch)
 
 			
 			# ============ TEST LOOP ============================== #
@@ -812,36 +820,14 @@ class ADDA():
 				test_signal=True
 
 			if test_signal==True:
-				if source_testing==True:
-					source['test']['prediction']=np.zeros_like(source['test']['label'])
-					deb.prints(source['test']['prediction'].shape)
+
 				if target_testing==True:
-					target['test']['prediction']=np.zeros_like(target['test']['label'])
-					deb.prints(target['test']['prediction'].shape)
+					metrics=self.test_loop(target['test'],
+						self.batch['test'],target['fn_classify'],G)
 
-				if target_testing==True:			
-					self.batch['test']['n'] = target['test']['in'].shape[0] // self.batch['test']['size']
-					deb.prints(self.batch['test']['n'])
-
-					for batch_id in range(0, self.batch['test']['n']):
-						idx0 = batch_id*self.batch['test']['size']
-						idx1 = (batch_id+1)*self.batch['test']['size']
-						target['test']['prediction'][idx0:idx1]=np.squeeze(G(
-							target['fn_classify'], target['test']['in'][idx0:idx1]))
-					deb.prints(target['test']['label'].shape)		
-					metrics=metrics_get(target['test'],debug=1)
-
-				# ============ TEST LOOP ============================== #
-				if source_testing==True:	
-					
-
-					for batch_id in range(0, self.batch['test']['n']):
-						idx0 = batch_id*self.batch['test']['size']
-						idx1 = (batch_id+1)*self.batch['test']['size']
-						source['test']['prediction'][idx0:idx1]=np.squeeze(G(
-							source['fn_classify'], source['test']['in'][idx0:idx1]))
-					deb.prints(source['test']['label'].shape)		
-					metrics=metrics_get(source['test'],debug=1)
+				if source_testing==True:						
+					metrics=self.test_loop(source['test'],
+						self.batch['test'],source['fn_classify'],G)
 
 
 			#====================METRICS GET================================================#
@@ -850,18 +836,18 @@ class ADDA():
 
 			# =================== EARLY STOP CHECK ========================
 
-			if target_validating==1:
-				if self.early_stop['best_updated']==True:
-					self.early_stop['best_predictions']=target['test']['prediction']
-					target['encoder'].save_weights('target_encoder_best.h5')
-					discriminator.save_weights('discriminator_best.h5')
-	#				.save_weights('weights_best.h5')
-				print(self.early_stop['signal'])
-				if self.early_stop["signal"]==True:
-					print("EARLY STOP EPOCH",epoch,metrics)
-					np.save("prediction.npy",self.early_stop['best_predictions'])
-					np.save("labels.npy",target['test']['label'])
-					break
+			#if target_validating==1:
+			#	if self.early_stop['best_updated']==True:
+			#		self.early_stop['best_predictions']=target['test']['prediction']
+			#		target['encoder'].save_weights('target_encoder_best.h5')
+			#		discriminator.save_weights('discriminator_best.h5')
+	#		#		.save_weights('weights_best.h5')
+			#	print(self.early_stop['signal'])
+			#	if self.early_stop["signal"]==True:
+			#		print("EARLY STOP EPOCH",epoch,metrics)
+			#		np.save("prediction.npy",self.early_stop['best_predictions'])
+			#		np.save("labels.npy",target['test']['label'])
+			#		break
 		
 
 
