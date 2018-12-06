@@ -158,7 +158,8 @@ def metrics_get(data,ignore_bcknd=True,debug=1): #requires batch['prediction'],b
 
 	metrics={}
 	metrics['f1_score']=f1_score(labels,predictions,average=None)
-	metrics['f1_score_weighted']=f1_score(labels,predictions,average='weighted')
+	metrics['f1_score_avg']=np.average(metrics['f1_score'])
+	#metrics['f1_score_weighted']=f1_score(labels,predictions,average='weighted')
 			
 	metrics['overall_acc']=accuracy_score(labels,predictions)
 	metrics['confusion_matrix']=confusion_matrix(labels,predictions)
@@ -170,11 +171,13 @@ def metrics_get(data,ignore_bcknd=True,debug=1): #requires batch['prediction'],b
 	print(np.sum(metrics['confusion_matrix'],axis=1))
 	acc=metrics['confusion_matrix'].diagonal()/np.sum(metrics['confusion_matrix'],axis=1)
 	acc=acc[~np.isnan(acc)]
+	metrics['average_acc']=np.average(acc)
+
 	print("Acc",acc)
-	print("AA",np.average(acc))
+	print("AA",metrics['average_acc'])
 	print("OA",np.sum(metrics['confusion_matrix'].diagonal())/np.sum(metrics['confusion_matrix']))
 	print("F1",metrics['f1_score'])
-	print("F1_weighted",metrics['f1_score_weighted'])
+	print("F1_avg",metrics['f1_score_avg'])
 	
 	print(metrics['confusion_matrix'])
 
@@ -437,6 +440,7 @@ class ADDA():
 					'signal':False,
 					'patience':patience}
 			deb.prints(self.batch['val']['n'])
+			print("Initializing validation...")
 
 		deb.prints(self.batch['train']['n'])
 		deb.prints(self.batch['test']['n'])
@@ -499,15 +503,13 @@ class ADDA():
 				metrics_val=metrics_get(data['val'],debug=1)
 			
 				#self.early_stop_check(metrics_val,epoch,most_important='f1_score')
-				self.early_stop_check(metrics_val,epoch)
+				self.early_stop_check(metrics_val,epoch,
+					most_important='f1_score_avg')
 
 			#==========================TEST LOOP================================================#
 			# If validating and best updated, test
 
-			if validating==1 && self.early_stop['best_updated']==True:
-				testing=1
-				testing_just_once=True
-
+			
 			if testing==1:
 				data['test']['prediction']=np.zeros_like(data['test']['label'])
 				self.batch_test_stats=True
@@ -531,8 +533,6 @@ class ADDA():
 				deb.prints(idx1)
 			else:
 				print("Testing was skipped")
-			if testing_just_once==True:
-				testing=0
 			
 			print("Epoch={}".format(epoch)) 
 			if testing==1:
@@ -543,14 +543,15 @@ class ADDA():
 
 			if validating==1:
 				if self.early_stop['best_updated']==True:
-					self.early_stop['best_predictions']=data['test']['prediction']
-					model.save_weights('source_encoder_para_vl.h5')
+					print("Saving weights...")
+					#self.early_stop['best_predictions']=data['test']['prediction']
+					model.save_weights('results_val/source_weights_para.h5')
 					
 				print(self.early_stop['signal'])
 				if self.early_stop["signal"]==True:
-					print("EARLY STOP EPOCH",epoch,metrics)
-					np.save("prediction.npy",self.early_stop['best_predictions'])
-					np.save("labels.npy",data['test']['label'])
+					print("EARLY STOP EPOCH",epoch)
+					#np.save("prediction.npy",self.early_stop['best_predictions'])
+					#np.save("labels.npy",data['test']['label'])
 					break
 	def layer_id_from_name_get(self,model,name):
 		index = None
@@ -574,7 +575,24 @@ class ADDA():
 			deb.prints(self.early_stop['count'])
 			if self.early_stop["count"]>=self.early_stop["patience"]:
 				self.early_stop["signal"]=True
+	def val_loop(self,target,G):		
 
+
+		target['val']['prediction']=np.zeros_like(target['val']['label'])
+		deb.prints(target['val']['prediction'].shape)
+		self.batch['val']['n'] = target['val']['in'].shape[0] // self.batch['val']['size']
+		deb.prints(self.batch['val']['n'])
+
+		for batch_id in range(0, self.batch['val']['n']):
+			idx0 = batch_id*self.batch['val']['size']
+			idx1 = (batch_id+1)*self.batch['val']['size']
+			target['val']['prediction'][idx0:idx1]=np.squeeze(G(
+				target['fn_classify'], target['val']['in'][idx0:idx1]))
+		deb.prints(target['val']['label'].shape)		
+		metrics_val=metrics_get(target['val'],debug=1)
+	
+		#self.early_stop_check(metrics_val,epoch,most_important='f1_score')
+		return metrics_val
 	def discriminator_train(self, source,target, 
 		source_weights=None, src_discriminator=None, 
 		tgt_discriminator=None, epochs=2000, batch_size=6, 
@@ -761,6 +779,11 @@ class ADDA():
 					#err_segmentation = netC_train([source['train']['in'][idx0:idx1],
 					#	source['train']['label'][idx0:idx1]])
 
+					# ============== IF EARLY VALIDATING ==============
+					#if early_validating and batch_id%100:
+
+
+					# ==================================================
 				self.metricsG['train']['loss'] /= self.batch['train']['n'] 
 				if D_training==True:
 					self.metricsD['train']['loss'] /= self.batch['train']['n'] 
@@ -778,23 +801,8 @@ class ADDA():
 			deb.prints(target_validating)
 			if target_validating==1:		
 				print("VALIDATING")	
-
-				target['val']['prediction']=np.zeros_like(target['val']['label'])
-				deb.prints(target['val']['prediction'].shape)
-				self.batch['val']['n'] = target['val']['in'].shape[0] // self.batch['val']['size']
-				deb.prints(self.batch['val']['n'])
-
-				for batch_id in range(0, self.batch['val']['n']):
-					idx0 = batch_id*self.batch['val']['size']
-					idx1 = (batch_id+1)*self.batch['val']['size']
-					target['val']['prediction'][idx0:idx1]=np.squeeze(G(
-						target['fn_classify'], target['val']['in'][idx0:idx1]))
-				deb.prints(target['val']['label'].shape)		
-				metrics_val=metrics_get(target['val'],debug=1)
-			
-				#self.early_stop_check(metrics_val,epoch,most_important='f1_score')
+				metrics_val=self.val_loop(target,G)
 				self.early_stop_check(metrics_val,epoch)
-
 
 			
 			# ============ TEST LOOP ============================== #
@@ -1056,7 +1064,7 @@ if __name__ == '__main__':
 				start_epoch=args.start_epoch-1,
 				testing=args.testing,weights_save=args.weights_save,
 				validating=args.source_validating, 
-				validation_data=target['val']) 
+				validation_data=source['val']) 
 		else:
 			adda.source_model_train(source_model, data=source, training=False, \
 				start_epoch=args.start_epoch-1,weights_save=args.weights_save)
