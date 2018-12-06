@@ -597,7 +597,7 @@ class ADDA():
 		source_weights=None, src_discriminator=None, 
 		tgt_discriminator=None, epochs=2000, batch_size=6, 
 		save_interval=1, start_epoch=0, num_batches=100,
-		target_validating=1, patience=5):   
+		target_validating=1, patience=5, early_validating=True):   
 		
 		use_lsgan = True
 		lrD = 2e-4
@@ -780,8 +780,9 @@ class ADDA():
 					#	source['train']['label'][idx0:idx1]])
 
 					# ============== IF EARLY VALIDATING ==============
-					#if early_validating and batch_id%100:
-
+					if early_validating==True and batch_id%100:
+						metrics_val=self.val_loop(target,G)
+						self.early_stop_check(metrics_val,epoch)
 
 					# ==================================================
 				self.metricsG['train']['loss'] /= self.batch['train']['n'] 
