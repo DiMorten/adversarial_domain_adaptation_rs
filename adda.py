@@ -53,7 +53,7 @@ def G(fn_generate, X):
 
 def stats_print(x):
 	print(np.min(x),np.max(x),np.average(x),x.dtype)
-def domain_data_load(domain,validating=0):
+def domain_data_load(domain,validating=0,all_test=False):
 
 	path='../wildfire_fcn/src/patch_extract2/compact/'+domain['dataset']+'/'
 	domain['train']={}
@@ -62,7 +62,11 @@ def domain_data_load(domain,validating=0):
 	domain['train']['label']=np.load(path+"train_label.npy")
 	domain['test']['in']=np.load(path+"test_im.npy")
 	domain['test']['label']=np.load(path+"test_label.npy")
-			
+	
+	if all_test==True:
+		domain['train']['in']=domain['test']['in'].copy()
+		domain['train']['label']=domain['test']['label'].copy()
+
 	deb.prints(domain['train']['in'].shape)
 	deb.prints(domain['train']['label'].shape)
 
@@ -81,8 +85,12 @@ def domain_data_load(domain,validating=0):
 		domain['val']['label']=np.load(path+"val_label.npy")
 		deb.prints(np.unique(domain['val']['label'],return_counts=True))	
 		domain['val']['label']=batch_label_to_one_hot(domain['val']['label'],class_n=class_n)
-
-	domain['loss_weights']=loss_weights_estimate(domain,bcknd_ignore=True,class_n=class_n)
+	
+	deb.prints(domain['train']['label'].shape[0])
+	if domain['train']['label'].shape[0]>0:
+		domain['loss_weights']=loss_weights_estimate(domain,bcknd_ignore=True,class_n=class_n)
+	else:
+		print("No training samples to estimate domain weights")
 	return domain
 def batch_label_to_one_hot(im,class_n=3):
 		#class_n=np.unique(im).shape[0]
@@ -386,6 +394,7 @@ class ADDA():
 	def source_model_train(self, model, data, batch_size=6, epochs=2000, \
 		save_interval=1, start_epoch=0,training=True,testing=1,
 		weights_save=False,validating=0,patience=5,validation_data=None):
+		self.training=training
 		deb.prints(validating)
 		batch_size=6
 		if validating==1:
@@ -396,8 +405,10 @@ class ADDA():
 		#batch_generator={}
 		#batch_generator['in']=minibatch(data['in'], batch_size)
 		#batch_generator['label']=minibatch(data['label'], batch_size)
-
-		loss_weighted=weighted_categorical_crossentropy(data['loss_weights'])
+		if self.training==True:
+			loss_weighted=weighted_categorical_crossentropy(data['loss_weights'])
+		else:
+			loss_weighted='categorical_crossentropy'
 		#model.compile(loss='categorical_crossentropy', optimizer=self.src_optimizer, metrics=['accuracy'])
 		model.compile(loss=loss_weighted, optimizer=self.src_optimizer, metrics=['accuracy'])
 		if not os.path.isdir('data'):
@@ -434,7 +445,7 @@ class ADDA():
 		self.batch={'train':{},'test':{}, 'val':{}}
 		self.metrics={'train':{},'test':{}, 'val':{}}
 		self.batch['train']['size']=batch_size
-		self.batch['test']['size']=2000
+		self.batch['test']['size']=5
 
 		
 		self.batch['train']['n'] = data['train']['in'].shape[0] // self.batch['train']['size']
@@ -453,7 +464,6 @@ class ADDA():
 		deb.prints(self.batch['train']['n'])
 		deb.prints(self.batch['test']['n'])
 
-		self.training=training
 		if self.training==False:
 			niter=1
 
@@ -841,7 +851,7 @@ class ADDA():
 
 
 			#====================METRICS GET================================================#
-			deb.prints(idx1)
+			#deb.prints(idx1)
 			print("Epoch={}".format(epoch))	
 
 			# =================== EARLY STOP CHECK ========================
@@ -1029,7 +1039,7 @@ if __name__ == '__main__':
 		source=domain_data_load({"dataset":args.source_dataset},
 			validating=args.source_validating)
 		target=domain_data_load({"dataset":args.target_dataset},
-			validating=args.adversarial_validating)
+			validating=args.adversarial_validating,all_test=True)
 				
 	try:
 		deb.prints(source['val']['in'].shape)
