@@ -575,24 +575,22 @@ class ADDA():
 			deb.prints(self.early_stop['count'])
 			if self.early_stop["count"]>=self.early_stop["patience"]:
 				self.early_stop["signal"]=True
-	def val_loop(self,target,G):		
+	def test_loop(self,data,batch,fn_classify,G):		
 
+		data['prediction']=np.zeros_like(data['label'])
+		deb.prints(data['prediction'].shape)
+		batch['n'] = data['in'].shape[0] // batch['size']
+		deb.prints(batch['n'])
 
-		target['val']['prediction']=np.zeros_like(target['val']['label'])
-		deb.prints(target['val']['prediction'].shape)
-		self.batch['val']['n'] = target['val']['in'].shape[0] // self.batch['val']['size']
-		deb.prints(self.batch['val']['n'])
-
-		for batch_id in range(0, self.batch['val']['n']):
-			idx0 = batch_id*self.batch['val']['size']
-			idx1 = (batch_id+1)*self.batch['val']['size']
-			target['val']['prediction'][idx0:idx1]=np.squeeze(G(
-				target['fn_classify'], target['val']['in'][idx0:idx1]))
-		deb.prints(target['val']['label'].shape)		
-		metrics_val=metrics_get(target['val'],debug=1)
-	
+		for batch_id in range(0, batch['n']):
+			idx0 = batch_id*batch['size']
+			idx1 = (batch_id+1)*batch['size']
+			data['prediction'][idx0:idx1]=np.squeeze(G(
+				fn_classify, data['in'][idx0:idx1]))
+		deb.prints(data['label'].shape)		
+		metrics=metrics_get(data,debug=1)
 		#self.early_stop_check(metrics_val,epoch,most_important='f1_score')
-		return metrics_val
+		return metrics
 	def discriminator_train(self, source,target, 
 		source_weights=None, src_discriminator=None, 
 		tgt_discriminator=None, epochs=2000, batch_size=6, 
@@ -781,7 +779,8 @@ class ADDA():
 
 					# ============== IF EARLY VALIDATING ==============
 					if early_validating==True and batch_id%100:
-						metrics_val=self.val_loop(target,G)
+						metrics_val=self.test_loop(target['val'],
+							self.batch['val'],target['fn_classify'],G)
 						self.early_stop_check(metrics_val,epoch)
 
 					# ==================================================
