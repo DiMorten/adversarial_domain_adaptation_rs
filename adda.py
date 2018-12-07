@@ -252,13 +252,19 @@ class ADDA():
 		if mode==1:
 			
 			x = Conv2D(32, kernel_size=(3, 3), activation='relu', input_shape=self.img_shape, padding='same', name=conv2d_prefix+str(count))(inp)
+			#x = batchnorm()(x, training=1)  
+			##x = LeakyReLU(alpha=0.2)(x)
 			count+=1
 			x = Conv2D(64, kernel_size=(3, 3), activation='relu', padding='same', name=conv2d_prefix+str(count))(x)
+			#x = batchnorm()(x, training=1)  
+			##x = LeakyReLU(alpha=0.2)(x)
 			count+=1
 			#x = MaxPooling2D(pool_size=(2, 2))(x)
 			#x = Conv2D(256, kernel_size=(3, 3), activation='relu', padding='same')(x)
 			x = Conv2D(128, kernel_size=(3, 3), activation='relu', padding='same', \
 				name=conv2d_prefix+str(count))(x)
+			#x = batchnorm()(x, training=1)  
+			##x = LeakyReLU(alpha=0.2)(x)
 			#x = Conv2D(64, kernel_size=(3, 3), activation='relu', padding='same')(x)
 			#x = MaxPooling2D(pool_size=(2, 2))(x)
 			#x = Conv2D(128, kernel_size=(3, 3), activation='relu', input_shape=self.img_shape, padding='same')(inp)
@@ -449,11 +455,16 @@ class ADDA():
 
 		
 		self.batch['train']['n'] = data['train']['in'].shape[0] // self.batch['train']['size']
+		self.batch['train']['flag']=0
+
 		self.batch['test']['n'] = data['test']['in'].shape[0] // self.batch['test']['size']
+		self.batch['test']['flag']=0
 
 		if validating==1:
 			self.batch['val']['size']=batch_size
 			self.batch['val']['n'] = data['val']['in'].shape[0] // self.batch['val']['size']
+			self.batch['val']['flag']=0
+
 			self.early_stop={'best':0,
 					'count':0,
 					'signal':False,
@@ -501,64 +512,25 @@ class ADDA():
 			# ============ VAL LOOP ============================== #
 
 			if validating==1:
-				self.metrics['val']['loss']=np.zeros((1,2))
-				data['val']['prediction']=np.zeros_like(data['val']['label'])
-				self.batch_test_stats=True
 
-				for batch_id in range(0, self.batch['val']['n']):
-					idx0 = batch_id*self.batch['val']['size']
-					idx1 = (batch_id+1)*self.batch['val']['size']
-
-					batch['val']['in'] = data['val']['in'][idx0:idx1]
-					batch['val']['label'] = data['val']['label'][idx0:idx1]
-
-					if self.batch_test_stats:
-						self.metrics['val']['loss'] += model.test_on_batch(
-							batch['val']['in'], batch['val']['label'])        # Accumulated epoch
-
-					data['val']['prediction'][idx0:idx1]=model.predict(
-						batch['val']['in'],batch_size=self.batch['val']['size'])
-				metrics_val=metrics_get(data['val'],debug=1)
-			
-				#self.early_stop_check(metrics_val,epoch,most_important='f1_score')
+				metrics_val=self.test_loop_source(data['val'],
+					batch['val'],self.batch['val'],model,self.metrics['val'])
+				
 				self.early_stop_check(metrics_val,epoch,
 					most_important='f1_score_avg')
 
 			#==========================TEST LOOP================================================#
-			# If validating and best updated, test
-
-			
+		
 			if testing==1:
-				data['test']['prediction']=np.zeros_like(data['test']['label'])
-				self.batch_test_stats=True
 
-				for batch_id in range(0, self.batch['test']['n']):
-					idx0 = batch_id*self.batch['test']['size']
-					idx1 = (batch_id+1)*self.batch['test']['size']
-
-					batch['test']['in'] = data['test']['in'][idx0:idx1]
-					batch['test']['label'] = data['test']['label'][idx0:idx1]
-
-					if self.batch_test_stats:
-						self.metrics['test']['loss'] += model.test_on_batch(
-							batch['test']['in'], batch['test']['label'])        # Accumulated epoch
-
-					data['test']['prediction'][idx0:idx1]=model.predict(
-						batch['test']['in'],batch_size=self.batch['test']['size'])
-
-				#====================METRICS GET================================================#
-				deb.prints(data['test']['label'].shape)     
-				deb.prints(idx1)
+				metrics=self.test_loop_source(data['test'],batch['test'],
+					self.batch['test'],model,self.metrics['test'])
 			else:
 				print("Testing was skipped")
 			
 			print("Epoch={}".format(epoch)) 
-			if testing==1:
-				# Average epoch loss
-				self.metrics['test']['loss'] /= self.batch['test']['n']
-				
-				metrics=metrics_get(data['test'],debug=1)
 
+			# ========================== EARLY STOP ===================
 			if validating==1:
 				if self.early_stop['best_updated']==True:
 					print("Saving weights...")
@@ -593,6 +565,35 @@ class ADDA():
 			deb.prints(self.early_stop['count'])
 			if self.early_stop["count"]>=self.early_stop["patience"]:
 				self.early_stop["signal"]=True
+	def test_loop_source(self,data,batch,global_batch,model,metrics,
+		metric_only_one=None,batch_test_stats=True):		
+
+		if data['in'].shape[0] % global_batch['size'] != 0 and global_batch['flag']==0:
+			global_batch['n'] += 1
+			global_batch['flag']=1
+		deb.prints(global_batch['n'])
+
+		metrics['loss']=np.zeros((1,2))
+		data['prediction']=np.zeros_like(data['label'])
+
+		for batch_id in range(0, global_batch['n']):
+			idx0 = batch_id*global_batch['size']
+			if batch_id!=global_batch['n']-1:
+				idx1 = (batch_id+1)*global_batch['size']
+			else:
+				idx1 = data['in'].shape[0]
+
+			batch['in'] = data['in'][idx0:idx1]
+			batch['label'] = data['label'][idx0:idx1]
+
+			if batch_test_stats:
+				metrics['loss'] += model.test_on_batch(
+					batch['in'], batch['label'])        # Accumulated epoch
+
+			data['prediction'][idx0:idx1]=model.predict(
+				batch['in'],batch_size=global_batch['size'])
+		metrics=metrics_get(data,debug=1,only_one=metric_only_one)
+		return metrics
 	def test_loop(self,data,batch,fn_classify,G,metric_only_one=None):		
 
 		data['prediction']=np.zeros_like(data['label'])
