@@ -598,11 +598,18 @@ class ADDA():
 		data['prediction']=np.zeros_like(data['label'])
 		deb.prints(data['prediction'].shape)
 		batch['n'] = data['in'].shape[0] // batch['size']
+
+		if data['in'].shape[0] % batch['size'] != 0:
+			batch['n'] += 1
+
 		deb.prints(batch['n'])
 
 		for batch_id in range(0, batch['n']):
 			idx0 = batch_id*batch['size']
-			idx1 = (batch_id+1)*batch['size']
+			if batch_id!=batch['n']-1:
+				idx1 = (batch_id+1)*batch['size']
+			else:
+				idx1 = data['in'].shape[0]
 			data['prediction'][idx0:idx1]=np.squeeze(G(
 				fn_classify, data['in'][idx0:idx1]))
 		deb.prints(data['label'].shape)		
