@@ -399,7 +399,7 @@ class ADDA():
 
 	def source_model_train(self, model, data, batch_size=6, epochs=2000, \
 		save_interval=1, start_epoch=0,training=True,testing=1,
-		weights_save=False,validating=0,patience=5,validation_data=None):
+		weights_save=False,validating=0,patience=20,validation_data=None):
 		self.training=training
 		deb.prints(validating)
 		batch_size=6
@@ -535,7 +535,7 @@ class ADDA():
 				if self.early_stop['best_updated']==True:
 					print("Saving weights...")
 					#self.early_stop['best_predictions']=data['test']['prediction']
-					model.save_weights('results_val/source_weights_para.h5')
+					model.save_weights('results_val/source_weights_'+data['dataset']+'.h5')
 					
 				print(self.early_stop['signal'])
 				if self.early_stop["signal"]==True:
