@@ -626,7 +626,7 @@ class ADDA():
 		source_weights=None, src_discriminator=None, 
 		tgt_discriminator=None, epochs=2000, batch_size=6, 
 		save_interval=1, start_epoch=0, num_batches=100,
-		target_validating=1, patience=50, early_validating=True):   
+		target_validating=1, patience=150, early_validating=True):   
 		
 		use_lsgan = True
 		lrD = 2e-4
@@ -797,9 +797,11 @@ class ADDA():
 					#	source['train']['label'][idx0:idx1]])
 
 					# ============== IF EARLY VALIDATING ==============
-					if early_validating==True and batch_id%100:
+					if early_validating==True and batch_id%20:
 						deb.prints(self.early_stop['best'])
-						metric_most_important='f1_score_avg'
+						#metric_most_important='f1_score_avg'
+						metric_most_important='average_acc'
+						
 						metrics_val,_=self.test_loop(target['val'],
 							self.batch['val'],target['fn_classify'],G,
 							metric_only_one=metric_most_important)
@@ -818,9 +820,9 @@ class ADDA():
 
 							print("EARLY STOP EPOCH",epoch,metrics)
 							np.save("result_adv/"+target['dataset']+
-								"prediction.npy",prediction)
+								"_prediction.npy",prediction)
 							np.save("result_adv/"+target['dataset']+
-								"labels.npy",target['test']['label'])
+								"_label.npy",target['test']['label'])
 							sys.exit()
 							#break
 						early_epoch+=1
