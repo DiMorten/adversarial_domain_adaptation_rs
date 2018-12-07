@@ -167,13 +167,17 @@ def metrics_get(data,ignore_bcknd=True,debug=1,only_one=None): #requires batch['
 	metrics={}
 	metrics['confusion_matrix']=confusion_matrix(labels,predictions)
 	
-	if only_one:
+	if only_one=='average_acc':
 		acc=metrics['confusion_matrix'].diagonal()/np.sum(metrics['confusion_matrix'],axis=1)
 		acc=acc[~np.isnan(acc)]
 		metrics['average_acc']=np.average(acc)
 		print("Acc",acc)
 		print("AA",metrics['average_acc'])
-
+	elif only_one=='f1_score_avg':
+		metrics['f1_score']=f1_score(labels,predictions,average=None)
+		metrics['f1_score_avg']=np.average(metrics['f1_score'])
+		print("F1",metrics['f1_score'])
+		print("F1_avg",metrics['f1_score_avg'])
 	else:
 		metrics['f1_score']=f1_score(labels,predictions,average=None)
 		metrics['f1_score_avg']=np.average(metrics['f1_score'])
@@ -444,7 +448,7 @@ class ADDA():
 		count=0
 		errSource=0
 		epoch=0
-		niter=150
+		niter=500
 		diplay_iters=200
 
 		batch = {'train': {}, 'test': {}, 'val':{}}
@@ -523,8 +527,9 @@ class ADDA():
 		
 			if testing==1:
 
-				metrics=self.test_loop_source(data['test'],batch['test'],
-					self.batch['test'],model,self.metrics['test'])
+				metrics,data['test']['prediction']=self.test_loop_source(
+					data['test'],batch['test'],self.batch['test'],
+					model,self.metrics['test'])
 			else:
 				print("Testing was skipped")
 			
@@ -540,8 +545,8 @@ class ADDA():
 				print(self.early_stop['signal'])
 				if self.early_stop["signal"]==True:
 					print("EARLY STOP EPOCH",epoch)
-					#np.save("prediction.npy",self.early_stop['best_predictions'])
-					#np.save("labels.npy",data['test']['label'])
+					np.save("result_source/prediction.npy",data['test']['prediction'])
+					np.save("result_source/labels.npy",data['test']['label'])
 					break
 	def layer_id_from_name_get(self,model,name):
 		index = None
@@ -593,7 +598,7 @@ class ADDA():
 			data['prediction'][idx0:idx1]=model.predict(
 				batch['in'],batch_size=global_batch['size'])
 		metrics=metrics_get(data,debug=1,only_one=metric_only_one)
-		return metrics
+		return metrics,data['prediction']
 	def test_loop(self,data,batch,fn_classify,G,metric_only_one=None):		
 
 		data['prediction']=np.zeros_like(data['label'])
@@ -794,25 +799,28 @@ class ADDA():
 					# ============== IF EARLY VALIDATING ==============
 					if early_validating==True and batch_id%100:
 						deb.prints(self.early_stop['best'])
+						metric_most_important='f1_score_avg'
 						metrics_val,_=self.test_loop(target['val'],
 							self.batch['val'],target['fn_classify'],G,
-							metric_only_one='average_acc')
+							metric_only_one=metric_most_important)
 						self.early_stop_check(metrics_val,early_epoch,
-							most_important='average_acc')
+							most_important=metric_most_important)
 
 						if self.early_stop['best_updated']==True:
 							print("BEST METRIC UPDATED")
-							target['encoder'].save_weights('target_encoder_best.h5')
-							discriminator.save_weights('discriminator_best.h5')
+							target['encoder'].save_weights('result_adv/target_encoder_best.h5')
+							discriminator.save_weights('result_adv/discriminator_best.h5')
 						if self.early_stop["signal"]==True:
-							target['encoder'].load_weights('target_encoder_best.h5')
-							discriminator.load_weights('discriminator_best.h5')
+							target['encoder'].load_weights('result_adv/target_encoder_best.h5')
+							discriminator.load_weights('result_adv/discriminator_best.h5')
 							metrics,prediction=self.test_loop(target['test'],
 								self.batch['test'],target['fn_classify'],G)
 
 							print("EARLY STOP EPOCH",epoch,metrics)
-							np.save("prediction.npy",prediction)
-							np.save("labels.npy",target['test']['label'])
+							np.save("result_adv/"+target['dataset']+
+								"prediction.npy",prediction)
+							np.save("result_adv/"+target['dataset']+
+								"labels.npy",target['test']['label'])
 							sys.exit()
 							#break
 						early_epoch+=1
