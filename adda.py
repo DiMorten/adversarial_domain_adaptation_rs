@@ -57,10 +57,12 @@ ap.add_argument('-cln', '--class_n', type=int,default=3, help="Class number. 3 f
 ap.add_argument('-c', '--channel_n', type=int,default=6, help="Class number. 3 for wildfire, 3 for vaihingen")
 ap.add_argument('-ibcknd', '--ignore_bcknd', type=int,default=1, help="Class number. 3 for wildfire, 3 for vaihingen")
 
+ap.add_argument('-em', '--encoder_mode',default='basic', help="Gen mode. basic or densenet")
+
 args = ap.parse_args()
 deb.prints(args.ignore_bcknd)
 deb.prints(args.source_validating)
-
+deb.prints(args.encoder_mode)
 t0 = time.time()
 class_n=args.class_n
 
@@ -280,8 +282,10 @@ def loss_weights_estimate(data,class_n,ignore_bcknd=1):
 		deb.prints(loss_weights.shape)
 		return loss_weights
 class ADDA():
-	def __init__(self, lr, window_len=32, channels=3, class_n=3):
+	def __init__(self, lr, window_len=32, channels=6, 
+		class_n=3, encoder_mode='basic'):
 		# Input shape
+		self.encoder_mode=encoder_mode
 		self.img_rows = window_len
 		self.img_cols = window_len
 		self.channels = channels
@@ -292,10 +296,15 @@ class ADDA():
 		
 		self.discriminator_decay_rate = 3 #iterations
 		self.discriminator_decay_factor = 0.5
-		self.src_optimizer = Adam(lr, 0.5)
-		self.tgt_optimizer = Adam(lr, 0.5)
+		if self.encoder_mode=='basic':
+			self.src_optimizer = Adam(lr, 0.5)
+			self.tgt_optimizer = Adam(lr, 0.5)
+		elif self.encoder_mode=='densenet':
+			self.src_optimizer = Adagrad(0.01)
+			self.tgt_optimizer = Adagrad(0.01)
 		self.class_n=class_n
 		self.source_weights_path='results/'
+		
 	def define_source_encoder(self, weights=None,model_return=False):
 	
 		#self.source_encoder = keras.applications.vgg16.VGG16(include_top=False, weights='imagenet', input_shape=self.img_shape, pooling=None, classes=10)
@@ -303,8 +312,8 @@ class ADDA():
 		conv2d_prefix="conv2d_e"
 		self.source_encoder = Sequential()
 		inp = Input(shape=self.img_shape)
-		mode=2
-		if mode==1:
+		#self.encoder_mode=2
+		if self.encoder_mode=='basic':
 			
 			x = Conv2D(32, kernel_size=(3, 3), activation='relu', input_shape=self.img_shape, padding='same', name=conv2d_prefix+str(count))(inp)
 			#x = batchnorm()(x, training=1)  
@@ -326,7 +335,7 @@ class ADDA():
 			#x = Conv2D(64, kernel_size=(3, 3), activation='relu', padding='same')(x)
 			#x = Conv2D(32, kernel_size=(3, 3), activation='relu', padding='same')(x)
 			#x = MaxPooling2D(pool_size=(2, 2))(x)
-		elif mode==2:
+		elif self.source_encoder=='densenet':
 			x = DenseNetFCN(self.img_shape, nb_dense_block=2, growth_rate=16, dropout_rate=0.2,
 					nb_layers_per_block=2, upsampling_type='deconv', classes=self.class_n, 
 					activation='softmax', batchsize=32,input_tensor=inp,
@@ -1114,7 +1123,8 @@ if __name__ == '__main__':
 
 
 	
-	adda = ADDA(args.lr, args.window_len, args.channel_n,class_n=class_n)
+	adda = ADDA(args.lr, args.window_len, args.channel_n,class_n=class_n,
+		encoder_mode=args.encoder_mode)
 	print(0.1)
 	adda.define_source_encoder()
 	print(0.2)
