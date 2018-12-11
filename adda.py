@@ -35,8 +35,34 @@ from keras.initializers import RandomNormal
 
 from densnet import DenseNetFCN
 
+
+ap = argparse.ArgumentParser()
+ap.add_argument('-s', '--source_weights', required=False, help="Path to weights file to load source model for training classification/adaptation")
+ap.add_argument('-e', '--start_epoch', type=int,default=1, required=False, help="Epoch to begin training source model from")
+ap.add_argument('-n', '--discriminator_epochs', type=int, default=10000, help="Max number of steps to train discriminator")
+ap.add_argument('-l', '--lr', type=float, default=0.0001, help="Initial Learning Rate")
+ap.add_argument('-f', '--train_discriminator', action='store_true', help="Train discriminator model (if TRUE) vs Train source classifier")
+ap.add_argument('-a', '--discriminator_weights', help="Path to weights file to load discriminator")
+ap.add_argument('-t', '--eval_source_classifier', default=None, help="Path to source classifier model to test/evaluate")
+ap.add_argument('-d', '--eval_target_classifier', default=None, help="Path to target discriminator model to test/evaluate")
+ap.add_argument('-sds', '--source_dataset', default="para", help="Path to source dataset")
+ap.add_argument('-tds', '--target_dataset', default="acre", help="Path to target dataset")
+ap.add_argument('-ting', '--testing', default=1, help="Path to target dataset")
+ap.add_argument('-advval', '--adversarial_validating', type=int,default=0, help="Path to target dataset")
+ap.add_argument('-sval', '--source_validating', type=int,default=0, help="0 for no validation, 1 for source  validation, 2 for target validation")
+
+ap.add_argument('-ws', '--weights_save', type=bool,default=True, help="Save weights during source training")
+ap.add_argument('-w', '--window_len', type=int,default=32, help="Save weights during source training")
+ap.add_argument('-cln', '--class_n', type=int,default=3, help="Class number. 3 for wildfire, 3 for vaihingen")
+ap.add_argument('-c', '--channel_n', type=int,default=6, help="Class number. 3 for wildfire, 3 for vaihingen")
+ap.add_argument('-ibcknd', '--ignore_bcknd', type=int,default=1, help="Class number. 3 for wildfire, 3 for vaihingen")
+
+args = ap.parse_args()
+deb.prints(args.ignore_bcknd)
+deb.prints(args.source_validating)
+
 t0 = time.time()
-class_n=3
+class_n=args.class_n
 
 conv_init = RandomNormal(0, 0.02)
 gamma_init = RandomNormal(1., 0.02) # for batch normalization
@@ -53,7 +79,8 @@ def G(fn_generate, X):
 
 def stats_print(x):
 	print(np.min(x),np.max(x),np.average(x),x.dtype)
-def domain_data_load(domain,validating=0,all_test=False):
+def domain_data_load(domain,validating=0,all_test=False,
+	ignore_bcknd=1):
 
 	path='../wildfire_fcn/src/patch_extract2/compact/'+domain['dataset']+'/'
 	domain['train']={}
@@ -88,7 +115,7 @@ def domain_data_load(domain,validating=0,all_test=False):
 	
 	deb.prints(domain['train']['label'].shape[0])
 	if domain['train']['label'].shape[0]>0:
-		domain['loss_weights']=loss_weights_estimate(domain,bcknd_ignore=True,class_n=class_n)
+		domain['loss_weights']=loss_weights_estimate(domain,ignore_bcknd=ignore_bcknd,class_n=class_n)
 	else:
 		print("No training samples to estimate domain weights")
 	return domain
@@ -136,7 +163,8 @@ def probabilities_to_one_hot(vals):
 	out=np.zeros_like(vals)
 	out[np.arange(len(vals)), vals.argmax(1)] = 1
 	return out
-def metrics_get(data,ignore_bcknd=True,debug=1,only_one=None): #requires batch['prediction'],batch['label']
+def metrics_get(data,ignore_bcknd=1,debug=1,
+	only_one=None): #requires batch['prediction'],batch['label']
 	
 
 	# ==========================IMGS FLATTEN ==========================================#
@@ -150,7 +178,7 @@ def metrics_get(data,ignore_bcknd=True,debug=1,only_one=None): #requires batch['
 	
 	deb.prints(np.unique(labels,return_counts=True))   
 
-	if ignore_bcknd==True:
+	if ignore_bcknd==1:
 		predictions=predictions[labels>0]
 		labels=labels[labels>0]
 
@@ -227,9 +255,9 @@ def metrics_get(data,ignore_bcknd=True,debug=1,only_one=None): #requires batch['
 	return metrics
 
 
-def loss_weights_estimate(data,class_n,bcknd_ignore=True):
+def loss_weights_estimate(data,class_n,ignore_bcknd=1):
 		unique,count=np.unique(data['train']['label'].argmax(axis=3),return_counts=True)
-		if bcknd_ignore==True:
+		if ignore_bcknd==1:
 			unique=unique[1:] # No bcknd
 			count=count[1:].astype(np.float32)
 		else:
@@ -275,7 +303,7 @@ class ADDA():
 		conv2d_prefix="conv2d_e"
 		self.source_encoder = Sequential()
 		inp = Input(shape=self.img_shape)
-		mode=1
+		mode=2
 		if mode==1:
 			
 			x = Conv2D(32, kernel_size=(3, 3), activation='relu', input_shape=self.img_shape, padding='same', name=conv2d_prefix+str(count))(inp)
@@ -426,7 +454,8 @@ class ADDA():
 
 	def source_model_train(self, model, data, batch_size=6, epochs=2000, \
 		save_interval=1, start_epoch=0,training=True,testing=1,
-		weights_save=False,validating=0,patience=20,validation_data=None):
+		weights_save=False,validating=0,patience=20,
+		validation_data=None,ignore_bcknd=1):
 		self.training=training
 		deb.prints(validating)
 		batch_size=6
@@ -540,9 +569,10 @@ class ADDA():
 
 			if validating==1:
 
-				metrics_val=self.test_loop_source(data['val'],
-					batch['val'],self.batch['val'],model,self.metrics['val'])
-				
+				metrics_val,_=self.test_loop_source(data['val'],
+					batch['val'],self.batch['val'],model,
+					self.metrics['val'],
+					ignore_bcknd=ignore_bcknd)
 				self.early_stop_check(metrics_val,epoch,
 					most_important='f1_score_avg')
 
@@ -552,7 +582,8 @@ class ADDA():
 
 				metrics,data['test']['prediction']=self.test_loop_source(
 					data['test'],batch['test'],self.batch['test'],
-					model,self.metrics['test'])
+					model,self.metrics['test'],
+					ignore_bcknd=ignore_bcknd)
 			else:
 				print("Testing was skipped")
 			
@@ -594,7 +625,8 @@ class ADDA():
 			if self.early_stop["count"]>=self.early_stop["patience"]:
 				self.early_stop["signal"]=True
 	def test_loop_source(self,data,batch,global_batch,model,metrics,
-		metric_only_one=None,batch_test_stats=True):		
+		metric_only_one=None,batch_test_stats=True,
+		ignore_bcknd=1):		
 
 		if data['in'].shape[0] % global_batch['size'] != 0 and global_batch['flag']==0:
 			global_batch['n'] += 1
@@ -620,7 +652,9 @@ class ADDA():
 
 			data['prediction'][idx0:idx1]=model.predict(
 				batch['in'],batch_size=global_batch['size'])
-		metrics=metrics_get(data,debug=1,only_one=metric_only_one)
+		metrics=metrics_get(data,debug=1,
+			only_one=metric_only_one,
+			ignore_bcknd=ignore_bcknd)
 		return metrics,data['prediction']
 	def test_loop(self,data,batch,fn_classify,G,metric_only_one=None):		
 
@@ -968,27 +1002,7 @@ class ADDA():
 		 
 if __name__ == '__main__':
 
-	ap = argparse.ArgumentParser()
-	ap.add_argument('-s', '--source_weights', required=False, help="Path to weights file to load source model for training classification/adaptation")
-	ap.add_argument('-e', '--start_epoch', type=int,default=1, required=False, help="Epoch to begin training source model from")
-	ap.add_argument('-n', '--discriminator_epochs', type=int, default=10000, help="Max number of steps to train discriminator")
-	ap.add_argument('-l', '--lr', type=float, default=0.0001, help="Initial Learning Rate")
-	ap.add_argument('-f', '--train_discriminator', action='store_true', help="Train discriminator model (if TRUE) vs Train source classifier")
-	ap.add_argument('-a', '--discriminator_weights', help="Path to weights file to load discriminator")
-	ap.add_argument('-t', '--eval_source_classifier', default=None, help="Path to source classifier model to test/evaluate")
-	ap.add_argument('-d', '--eval_target_classifier', default=None, help="Path to target discriminator model to test/evaluate")
-	ap.add_argument('-sds', '--source_dataset', default="para", help="Path to source dataset")
-	ap.add_argument('-tds', '--target_dataset', default="acre", help="Path to target dataset")
-	ap.add_argument('-ting', '--testing', default=1, help="Path to target dataset")
-	ap.add_argument('-advval', '--adversarial_validating', type=int,default=0, help="Path to target dataset")
-	ap.add_argument('-sval', '--source_validating', type=int,default=0, help="0 for no validation, 1 for source  validation, 2 for target validation")
 
-	ap.add_argument('-ws', '--weights_save', type=bool,default=True, help="Save weights during source training")
-	ap.add_argument('-w', '--window_len', type=int,default=32, help="Save weights during source training")
-	
-	args = ap.parse_args()
-	
-	deb.prints(args.source_validating)
 
 	# ========= Define data sources =====================
 	
@@ -1081,9 +1095,12 @@ if __name__ == '__main__':
 		
 		#source_validating=1 if args.source_validating==True else 0
 		source=domain_data_load({"dataset":args.source_dataset},
-			validating=args.source_validating)
+			validating=args.source_validating,
+			ignore_bcknd=args.ignore_bcknd)
 		target=domain_data_load({"dataset":args.target_dataset},
-			validating=args.adversarial_validating,all_test=True)
+			validating=args.adversarial_validating,
+			ignore_bcknd=args.ignore_bcknd,
+			all_test=True)
 				
 	try:
 		deb.prints(source['val']['in'].shape)
@@ -1097,7 +1114,7 @@ if __name__ == '__main__':
 
 
 	
-	adda = ADDA(args.lr, args.window_len, 6,class_n=class_n)
+	adda = ADDA(args.lr, args.window_len, args.channel_n,class_n=class_n)
 	print(0.1)
 	adda.define_source_encoder()
 	print(0.2)
@@ -1114,7 +1131,8 @@ if __name__ == '__main__':
 				start_epoch=args.start_epoch-1,
 				testing=args.testing,weights_save=args.weights_save,
 				validating=args.source_validating, 
-				validation_data=source['val']) 
+				validation_data=source['val'],
+				ignore_bcknd=args.ignore_bcknd) 
 		else:
 			adda.source_model_train(source_model, data=source, training=False, \
 				start_epoch=args.start_epoch-1,weights_save=args.weights_save)
