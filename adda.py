@@ -13,8 +13,8 @@ from keras.utils import np_utils
 import keras.backend as K
 import keras
 from keras.regularizers import l2
-from sklearn.metrics import confusion_matrix,f1_score,accuracy_score,classification_report
-
+from sklearn.metrics import confusion_matrix,f1_score,accuracy_score,classification_report,jaccard_similarity_score
+from sklearn.metrics import cohen_kappa_score, precision_score, recall_score
 import tensorflow as tf
 #from datasets import get_dataset
 
@@ -178,6 +178,21 @@ def metrics_get(data,ignore_bcknd=True,debug=1,only_one=None): #requires batch['
 		metrics['f1_score_avg']=np.average(metrics['f1_score'])
 		print("F1",metrics['f1_score'])
 		print("F1_avg",metrics['f1_score_avg'])
+	elif only_one=='iou':
+		metrics['iou']=jaccard_similarity_score(labels,predictions)
+		print("IOU",metrics['iou'])
+	elif only_one=='kappa':
+		metrics['kappa']=cohen_kappa_score(labels,predictions)
+	elif only_one=='oa_aa':
+		acc=metrics['confusion_matrix'].diagonal()/np.sum(metrics['confusion_matrix'],axis=1)
+		acc=acc[~np.isnan(acc)]
+		metrics['average_acc']=np.average(acc)
+		
+		metrics['overall_acc']=accuracy_score(labels,predictions)
+		print("Acc",acc)
+		print("AA",metrics['average_acc'])
+		metrics['oa_aa']=np.average((metrics['overall_acc'],metrics['average_acc']))
+		deb.prints(metrics['oa_aa'])
 	else:
 		metrics['f1_score']=f1_score(labels,predictions,average=None)
 		metrics['f1_score_avg']=np.average(metrics['f1_score'])
@@ -193,12 +208,20 @@ def metrics_get(data,ignore_bcknd=True,debug=1,only_one=None): #requires batch['
 		acc=metrics['confusion_matrix'].diagonal()/np.sum(metrics['confusion_matrix'],axis=1)
 		acc=acc[~np.isnan(acc)]
 		metrics['average_acc']=np.average(acc)
+		#metrics['iou']=jaccard_similarity_score(labels,predictions)
+		metrics['kappa']=cohen_kappa_score(labels,predictions)
+		metrics['precision']=precision_score(labels,predictions,average=None)
+		metrics['recall']=recall_score(labels,predictions,average=None)
+		print("kappa",metrics['kappa'])
+		
+		#print("IOU",metrics['iou'])
 		print("Acc",acc)
 		print("AA",metrics['average_acc'])
 		print("OA",np.sum(metrics['confusion_matrix'].diagonal())/np.sum(metrics['confusion_matrix']))
 		print("F1",metrics['f1_score'])
 		print("F1_avg",metrics['f1_score_avg'])
-	
+		print("Precision",metrics['precision'],np.average(metrics['precision']))
+		print("Recall",metrics['recall'],np.average(metrics['recall']))	
 	print(metrics['confusion_matrix'])
 
 	return metrics
@@ -800,8 +823,11 @@ class ADDA():
 					if early_validating==True and batch_id%20:
 						deb.prints(self.early_stop['best'])
 						#metric_most_important='f1_score_avg'
-						metric_most_important='average_acc'
-						
+						#metric_most_important='average_acc'
+						metric_most_important='kappa'
+						#metric_most_important='oa_aa'
+
+
 						metrics_val,_=self.test_loop(target['val'],
 							self.batch['val'],target['fn_classify'],G,
 							metric_only_one=metric_most_important)
