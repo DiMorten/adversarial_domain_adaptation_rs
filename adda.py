@@ -103,7 +103,8 @@ def domain_data_load(domain,validating=0,all_test=False,
 	deb.prints(np.unique(domain['train']['label'],return_counts=True))
 	deb.prints(np.unique(domain['test']['label'],return_counts=True))
 	
-	
+	deb.prints(np.unique(domain['train']['label'],
+		return_counts=True))
 	domain['train']['label']=batch_label_to_one_hot(domain['train']['label'],class_n=class_n)
 	domain['test']['label']=batch_label_to_one_hot(domain['test']['label'],class_n=class_n)
 	deb.prints(domain['train']['label'].shape)
@@ -116,7 +117,10 @@ def domain_data_load(domain,validating=0,all_test=False,
 		domain['val']['label']=batch_label_to_one_hot(domain['val']['label'],class_n=class_n)
 	
 	deb.prints(domain['train']['label'].shape[0])
+
+	print("Estimating weights...")
 	if domain['train']['label'].shape[0]>0:
+		print("Class n° for weight estimation",class_n)
 		domain['loss_weights']=loss_weights_estimate(domain,ignore_bcknd=ignore_bcknd,class_n=class_n)
 	else:
 		print("No training samples to estimate domain weights")
@@ -260,9 +264,10 @@ def metrics_get(data,ignore_bcknd=1,debug=1,
 
 def loss_weights_estimate(data,class_n,ignore_bcknd=1):
 		unique,count=np.unique(data['train']['label'].argmax(axis=3),return_counts=True)
-		if ignore_bcknd==1:
+		if ignore_bcknd==1 and np.any(np.array(unique)==0):
 			unique=unique[1:] # No bcknd
 			count=count[1:].astype(np.float32)
+			deb.prints(count)
 		else:
 			count=count.astype(np.float32)
 		weights_from_unique=np.max(count)/count
@@ -305,7 +310,7 @@ class ADDA():
 			self.tgt_optimizer = Adagrad(0.01)
 		self.class_n=class_n
 		self.source_weights_path='results/'
-		
+
 	def define_source_encoder(self, weights=None,model_return=False):
 	
 		#self.source_encoder = keras.applications.vgg16.VGG16(include_top=False, weights='imagenet', input_shape=self.img_shape, pooling=None, classes=10)
@@ -371,6 +376,8 @@ class ADDA():
 		weight_decay=1E-4
 		count=0
 		conv2d_prefix="conv2d_c"
+		deb.prints(self.class_n)
+
 		if atomic==True:
 			inp = Input(shape=shape)
 			x = Conv2D(self.class_n, (1, 1), activation='softmax', padding='same', kernel_regularizer=l2(weight_decay),
@@ -872,8 +879,8 @@ class ADDA():
 					if early_validating==True and batch_id%20:
 						deb.prints(self.early_stop['best'])
 						#metric_most_important='f1_score_avg'
-						#metric_most_important='average_acc'
-						metric_most_important='kappa'
+						metric_most_important='average_acc'
+						#metric_most_important='kappa'
 						#metric_most_important='oa_aa'
 
 
@@ -1130,7 +1137,6 @@ if __name__ == '__main__':
 
 
 
-	
 	adda = ADDA(args.lr, args.window_len, args.channel_n,class_n=class_n,
 		encoder_mode=args.encoder_mode)
 	print(0.1)
