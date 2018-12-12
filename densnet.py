@@ -226,8 +226,8 @@ def __transition_block(ip, nb_filter, compression=1.0, dropout_rate=None, weight
                       kernel_regularizer=l2(weight_decay))(x)
     if dropout_rate:
         x = Dropout(dropout_rate)(x)
-    x = AveragePooling2D((2, 2), strides=(2, 2))(x)
-    #x = MaxPooling2D((2, 2), strides=(2, 2))(x)
+    #x = AveragePooling2D((2, 2), strides=(2, 2))(x)
+    x = MaxPooling2D((2, 2), strides=(2, 2))(x)
 
     return x
 

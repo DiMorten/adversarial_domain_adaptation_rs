@@ -300,7 +300,7 @@ class ADDA():
 		if self.encoder_mode=='basic':
 			self.src_optimizer = Adam(lr, 0.5)
 			self.tgt_optimizer = Adam(lr, 0.5)
-		elif self.encoder_mode=='densenet':
+		else:#		elif self.encoder_mode=='densenet':
 			self.src_optimizer = Adagrad(0.01)
 			self.tgt_optimizer = Adagrad(0.01)
 		self.class_n=class_n
@@ -336,7 +336,7 @@ class ADDA():
 			#x = Conv2D(64, kernel_size=(3, 3), activation='relu', padding='same')(x)
 			#x = Conv2D(32, kernel_size=(3, 3), activation='relu', padding='same')(x)
 			#x = MaxPooling2D(pool_size=(2, 2))(x)
-		elif self.source_encoder=='densenet':
+		else:# self.source_encoder=='densenet':
 			x = DenseNetFCN(self.img_shape, nb_dense_block=2, growth_rate=16, dropout_rate=0.2,
 					nb_layers_per_block=2, upsampling_type='deconv', classes=self.class_n, 
 					activation='softmax', batchsize=32,input_tensor=inp,
@@ -464,7 +464,7 @@ class ADDA():
 
 	def source_model_train(self, model, data, batch_size=6, epochs=2000, \
 		save_interval=1, start_epoch=0,training=True,testing=1,
-		weights_save=False,validating=0,patience=20,
+		weights_save=False,validating=0,patience=10,
 		validation_data=None,ignore_bcknd=1):
 		self.training=training
 		deb.prints(validating)
@@ -667,7 +667,8 @@ class ADDA():
 			only_one=metric_only_one,
 			ignore_bcknd=ignore_bcknd)
 		return metrics,data['prediction']
-	def test_loop(self,data,batch,fn_classify,G,metric_only_one=None):		
+	def test_loop(self,data,batch,fn_classify,G,
+		metric_only_one=None,ignore_bcknd=1):		
 
 		data['prediction']=np.zeros_like(data['label'])
 		deb.prints(data['prediction'].shape)
@@ -687,14 +688,17 @@ class ADDA():
 			data['prediction'][idx0:idx1]=np.squeeze(G(
 				fn_classify, data['in'][idx0:idx1]))
 		deb.prints(data['label'].shape)		
-		metrics=metrics_get(data,debug=1,only_one=metric_only_one)
+		metrics=metrics_get(data,debug=1,
+			only_one=metric_only_one,
+			ignore_bcknd=ignore_bcknd)
 		#self.early_stop_check(metrics_val,epoch,most_important='f1_score')
 		return metrics,data['prediction']
 	def discriminator_train(self, source,target, 
 		source_weights=None, src_discriminator=None, 
 		tgt_discriminator=None, epochs=2000, batch_size=6, 
 		save_interval=1, start_epoch=0, num_batches=100,
-		target_validating=1, patience=150, early_validating=True):   
+		target_validating=1, patience=150, 
+		early_validating=True, ignore_bcknd=1):   
 		
 		use_lsgan = True
 		lrD = 2e-4
@@ -875,7 +879,8 @@ class ADDA():
 
 						metrics_val,_=self.test_loop(target['val'],
 							self.batch['val'],target['fn_classify'],G,
-							metric_only_one=metric_most_important)
+							metric_only_one=metric_most_important,
+							ignore_bcknd=ignore_bcknd)
 						self.early_stop_check(metrics_val,early_epoch,
 							most_important=metric_most_important)
 
@@ -887,7 +892,8 @@ class ADDA():
 							target['encoder'].load_weights('result_adv/target_encoder_best.h5')
 							discriminator.load_weights('result_adv/discriminator_best.h5')
 							metrics,prediction=self.test_loop(target['test'],
-								self.batch['test'],target['fn_classify'],G)
+								self.batch['test'],target['fn_classify'],G,
+								ignore_bcknd=ignore_bcknd)
 
 							print("EARLY STOP EPOCH",epoch,metrics)
 							np.save("result_adv/"+target['dataset']+
@@ -1157,7 +1163,8 @@ if __name__ == '__main__':
 										source_weights=args.source_weights, 
 										source=source, target=target, 
 										start_epoch=args.start_epoch-1,
-										target_validating=args.adversarial_validating)
+										target_validating=args.adversarial_validating,
+										ignore_bcknd=args.ignore_bcknd)
 	if args.eval_target_classifier is not None:
 		adda.eval_target_classifier(args.eval_source_classifier, args.eval_target_classifier)
 	
