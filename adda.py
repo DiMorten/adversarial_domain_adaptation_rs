@@ -59,6 +59,8 @@ ap.add_argument('-ibcknd', '--ignore_bcknd', type=int,default=1, help="Class num
 
 ap.add_argument('-em', '--encoder_mode',default='basic', help="Gen mode. basic or densenet")
 
+ap.add_argument('-tm', '--testing_mode',default=None, help="Testing mode can be 'for_loop'")
+
 args = ap.parse_args()
 deb.prints(args.ignore_bcknd)
 deb.prints(args.source_validating)
@@ -587,7 +589,7 @@ class ADDA():
 			if validating==1:
 
 				metrics_val,_=self.test_loop_source(data['val'],
-					batch['val'],self.batch['val'],model,
+					self.batch['val'],model,
 					self.metrics['val'],
 					ignore_bcknd=ignore_bcknd)
 				self.early_stop_check(metrics_val,epoch,
@@ -599,7 +601,7 @@ class ADDA():
 				print("Testing...")
 				deb.prints(ignore_bcknd)
 				metrics,data['test']['prediction']=self.test_loop_source(
-					data['test'],batch['test'],self.batch['test'],
+					data['test'],self.batch['test'],
 					model,self.metrics['test'],
 					ignore_bcknd=ignore_bcknd)
 			else:
@@ -642,34 +644,36 @@ class ADDA():
 			deb.prints(self.early_stop['count'])
 			if self.early_stop["count"]>=self.early_stop["patience"]:
 				self.early_stop["signal"]=True
-	def test_loop_source(self,data,batch,global_batch,model,metrics,
+	def test_loop_source(self,data,batch,model,metrics,
 		metric_only_one=None,batch_test_stats=True,
 		ignore_bcknd=1):		
-
-		if data['in'].shape[0] % global_batch['size'] != 0 and global_batch['flag']==0:
-			global_batch['n'] += 1
-			global_batch['flag']=1
-		deb.prints(global_batch['n'])
 
 		metrics['loss']=np.zeros((1,2))
 		data['prediction']=np.zeros_like(data['label'])
 
-		for batch_id in range(0, global_batch['n']):
-			idx0 = batch_id*global_batch['size']
-			if batch_id!=global_batch['n']-1:
-				idx1 = (batch_id+1)*global_batch['size']
+		if data['in'].shape[0] % batch['size'] != 0 and batch['flag']==0:
+			batch['n'] += 1
+			batch['flag']=1
+		deb.prints(batch['n'])
+
+		for batch_id in range(0, batch['n']):
+			idx0 = batch_id*batch['size']
+			if batch_id!=batch['n']-1:
+				idx1 = (batch_id+1)*batch['size']
 			else:
 				idx1 = data['in'].shape[0]
 
-			batch['in'] = data['in'][idx0:idx1]
-			batch['label'] = data['label'][idx0:idx1]
+			#batch['in'] = data['in'][idx0:idx1]
+			#batch['label'] = data['label'][idx0:idx1]
 
 			if batch_test_stats:
 				metrics['loss'] += model.test_on_batch(
-					batch['in'], batch['label'])        # Accumulated epoch
+					data['in'][idx0:idx1], 
+					data['label'][idx0:idx1])        # Accumulated epoch
 
 			data['prediction'][idx0:idx1]=model.predict(
-				batch['in'],batch_size=global_batch['size'])
+				data['in'][idx0:idx1],
+				batch_size=batch['size'])
 		metrics=metrics_get(data,debug=1,
 			only_one=metric_only_one,
 			ignore_bcknd=ignore_bcknd)
@@ -700,6 +704,8 @@ class ADDA():
 			ignore_bcknd=ignore_bcknd)
 		#self.early_stop_check(metrics_val,epoch,most_important='f1_score')
 		return metrics,data['prediction']
+
+	def test_loop_for(self,data,batch,)
 	def discriminator_train(self, source,target, 
 		source_weights=None, src_discriminator=None, 
 		tgt_discriminator=None, epochs=2000, batch_size=6, 
@@ -1160,7 +1166,7 @@ if __name__ == '__main__':
 		else:
 			adda.source_model_train(source_model, data=source, training=False, \
 				start_epoch=args.start_epoch-1,weights_save=args.weights_save,
-				ignore_bcknd=args.ignore_bcknd)
+				ignore_bcknd=args.ignore_bcknd,testing_mode=args.testing_mode)
 			
 	adda.define_target_encoder(args.source_weights)
 	
@@ -1170,7 +1176,8 @@ if __name__ == '__main__':
 										source=source, target=target, 
 										start_epoch=args.start_epoch-1,
 										target_validating=args.adversarial_validating,
-										ignore_bcknd=args.ignore_bcknd)
+										ignore_bcknd=args.ignore_bcknd,
+										testing_mode=args.testing_mode)
 	if args.eval_target_classifier is not None:
 		adda.eval_target_classifier(args.eval_source_classifier, args.eval_target_classifier)
 	
