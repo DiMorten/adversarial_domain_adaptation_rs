@@ -181,6 +181,7 @@ def metrics_get(data,ignore_bcknd=1,debug=1,
 	deb.prints(np.unique(labels,return_counts=True))   
 
 	if ignore_bcknd==1:
+		print("Ignoring background...")
 		predictions=predictions[labels>0]
 		labels=labels[labels>0]
 
@@ -588,7 +589,8 @@ class ADDA():
 			#==========================TEST LOOP================================================#
 		
 			if testing==1:
-
+				print("Testing...")
+				deb.prints(ignore_bcknd)
 				metrics,data['test']['prediction']=self.test_loop_source(
 					data['test'],batch['test'],self.batch['test'],
 					model,self.metrics['test'],
@@ -1145,7 +1147,8 @@ if __name__ == '__main__':
 				ignore_bcknd=args.ignore_bcknd) 
 		else:
 			adda.source_model_train(source_model, data=source, training=False, \
-				start_epoch=args.start_epoch-1,weights_save=args.weights_save)
+				start_epoch=args.start_epoch-1,weights_save=args.weights_save,
+				ignore_bcknd=args.ignore_bcknd)
 			
 	adda.define_target_encoder(args.source_weights)
 	
