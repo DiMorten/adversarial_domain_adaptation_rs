@@ -62,6 +62,7 @@ ap.add_argument('-em', '--encoder_mode',default='basic', help="Gen mode. basic o
 ap.add_argument('-tm', '--testing_mode',default=None, help="Testing mode can be 'for_loop'")
 
 args = ap.parse_args()
+deb.prints(args.testing_mode)
 deb.prints(args.ignore_bcknd)
 deb.prints(args.source_validating)
 deb.prints(args.encoder_mode)
@@ -83,9 +84,28 @@ def G(fn_generate, X):
 
 def stats_print(x):
 	print(np.min(x),np.max(x),np.average(x),x.dtype)
-def domain_data_load(domain,validating=0,all_test=False,
-	ignore_bcknd=1,testing_mode=None):
+def batch_label_to_one_hot(im,class_n=3):
+		#class_n=np.unique(im).shape[0]
+		#deb.prints(class_n)
+		im_one_hot=np.zeros((im.shape[0],im.shape[1],im.shape[2],class_n))
+		#print(im_one_hot.shape)
+		#print(im.shape)
+		for clss in range(0,class_n):
+			im_one_hot[:,:,:,clss][im[:,:,:]==clss]=1
+		return im_one_hot
+def label_to_one_hot(im,class_n=3):
+		#class_n=np.unique(im).shape[0]
+		#deb.prints(class_n)
+		im_one_hot=np.zeros((im.shape[0],im.shape[1],class_n))
+		#print(im_one_hot.shape)
+		#print(im.shape)
+		for clss in range(0,class_n):
+			im_one_hot[:,:,clss][im[:,:]==clss]=1
+		return im_one_hot
 
+def domain_data_load(domain,validating=0,all_test=False,
+	ignore_bcknd=1,testing_mode=None,class_n=3):
+	deb.prints(domain['dataset'])
 	path='../wildfire_fcn/src/patch_extract2/compact/'+domain['dataset']+'/'
 	domain['train']={}
 	domain['test']={}
@@ -97,10 +117,11 @@ def domain_data_load(domain,validating=0,all_test=False,
 	if all_test==True:
 		domain['train']['in']=domain['test']['in'].copy()
 		domain['train']['label']=domain['test']['label'].copy()
-		if testing_mode=='for_loop':
-			domain['test']['full_in']=np.load(path+"test_full_im.npy")
-			domain['test']['full_label']=np.load(path+"test_full_label.npy")
-			domain['test']['full_mask']=np.load(path+"test_full_mask.npy")
+	if testing_mode=='for_loop':
+		domain['test']['full_in']=np.load(path+"test_full_im.npy")
+		domain['test']['full_label']=np.load(path+"test_full_label.npy")
+		domain['test']['full_mask']=np.load(path+"test_full_mask.npy")
+		domain['test']['full_label']=label_to_one_hot(domain['test']['full_label'],class_n=class_n)
 
 
 	deb.prints(domain['train']['in'].shape)
@@ -132,15 +153,6 @@ def domain_data_load(domain,validating=0,all_test=False,
 	else:
 		print("No training samples to estimate domain weights")
 	return domain
-def batch_label_to_one_hot(im,class_n=3):
-		#class_n=np.unique(im).shape[0]
-		#deb.prints(class_n)
-		im_one_hot=np.zeros((im.shape[0],im.shape[1],im.shape[2],class_n))
-		#print(im_one_hot.shape)
-		#print(im.shape)
-		for clss in range(0,class_n):
-			im_one_hot[:,:,:,clss][im[:,:,:]==clss]=1
-		return im_one_hot
 
 
 def read_image(fn):
@@ -177,9 +189,9 @@ def probabilities_to_one_hot(vals):
 	out[np.arange(len(vals)), vals.argmax(1)] = 1
 	return out
 def metrics_get(data,ignore_bcknd=1,debug=1,
-	only_one=None): #requires batch['prediction'],batch['label']
+	only_one=None,mask=None): #requires batch['prediction'],batch['label']
 	
-
+	mask=np.reshape(mask,-1)
 	# ==========================IMGS FLATTEN ==========================================#
 	predictions = ims_flatten(data['prediction'])
 	predictions=probabilities_to_one_hot(predictions)
@@ -195,6 +207,14 @@ def metrics_get(data,ignore_bcknd=1,debug=1,
 		print("Ignoring background...")
 		predictions=predictions[labels>0]
 		labels=labels[labels>0]
+
+	if mask is not None:
+		deb.prints(labels.shape)
+		deb.prints(mask.shape)
+		
+		print("Metrics get: Applying mask...")
+		predictions=predictions[mask==2]
+		labels=labels[mask==2]
 
 	deb.prints(np.unique(labels,return_counts=True))   
 
@@ -479,7 +499,8 @@ class ADDA():
 	def source_model_train(self, model, data, batch_size=6, epochs=2000, \
 		save_interval=1, start_epoch=0,training=True,testing=1,
 		weights_save=False,validating=0,patience=10,
-		validation_data=None,ignore_bcknd=1):
+		validation_data=None,ignore_bcknd=1,
+		testing_mode=None):
 		self.training=training
 		deb.prints(validating)
 		batch_size=6
@@ -604,11 +625,20 @@ class ADDA():
 		
 			if testing==1:
 				print("Testing...")
-				deb.prints(ignore_bcknd)
-				metrics,data['test']['prediction']=self.test_loop_source(
-					data['test'],self.batch['test'],
-					model,self.metrics['test'],
-					ignore_bcknd=ignore_bcknd)
+				if testing_mode=='for_loop':
+					metrics,data['test']['prediction']= \
+						self.test_loop_for(data['test'],
+							self.batch['test'],model,
+							self.metrics['test'],
+							ignore_bcknd=ignore_bcknd)
+
+				else:	
+					deb.prints(ignore_bcknd)
+					metrics,data['test']['prediction']=self.test_loop_source(
+						data['test'],self.batch['test'],
+						model,self.metrics['test'],
+						ignore_bcknd=ignore_bcknd)
+
 			else:
 				print("Testing was skipped")
 			
@@ -710,16 +740,75 @@ class ADDA():
 		#self.early_stop_check(metrics_val,epoch,most_important='f1_score')
 		return metrics,data['prediction']
 
-	#def test_loop_for(self,data,batch,model,metrics,
-	#	metric_only_one=None,batch_test_stats=True,
-	#	ignore_bcknd=1,fn_classify=None,G=None):
+	def test_loop_for(self,data,batch,model,metrics,
+		metric_only_one=None,batch_test_stats=True,
+		ignore_bcknd=1,fn_classify=None,G=None,
+		window=32,overlap=0):
+		
+		fname=sys._getframe().f_code.co_name
+
+		im=data['full_in'].copy()
+		del data['full_in']
+		mask=data['full_mask'].copy()
+		deb.prints(np.unique(mask,return_counts=True))
+		del data['full_mask']
+		label=data['full_label'].copy()
+		del data['full_label']
 
 
+		deb.prints(window,fname)
+		deb.prints(overlap,fname)
+		print("STARTED PATCH EXTRACTION")
+		#window= 256
+		#overlap= 200
+		patches_get={}
+		h, w, channels = im.shape
 
+		gridx = range(0, w - window, window - overlap)
+		gridx = np.hstack((gridx, w - window))
 
+		gridy = range(0, h - window, window - overlap)
+		gridy = np.hstack((gridy, h - window))
+		deb.prints(gridx.shape)
+		deb.prints(gridy.shape)
+		
+		counter=0
+		out={}
+		out['prediction']=np.zeros_like(label).astype(np.float32)
+		
+		#======================== START IMG LOOP ==================================#
+		for i in range(len(gridx)):
+			for j in range(len(gridy)):
+				if counter % 10000000 == 0:
+					deb.prints(counter,fname)
+				xx = gridx[i]
+				yy = gridy[j]
+				patch = im[yy: yy + window, xx: xx + window,:]
+				label_patch = label[yy: yy + window, xx: xx + window]
+				#mask_patch = mask[yy: yy + window, xx: xx + window]
+				if 1==1:
+					# To-do: Prediction from more than 1
+					prediction=model.predict(
+						np.expand_dims(patch,axis=0),
+						batch_size=1)
+					#deb.prints(prediction.shape)
+				#deb.prints(prediction.shape)
+				#deb.prints(prediction.dtype)
+				out['prediction'][yy: yy + window, xx: xx + window,:]=np.squeeze(prediction)
 
+				#	np.squeeze(prediction).argmax(axis=2).astype(np.uint8)
 
+				counter=counter+1
 
+#					out[:,yy: yy + window, xx: xx + window,:]					
+
+		out['label']=label.copy()
+		del label
+		metrics=metrics_get(out,debug=1,
+			only_one=metric_only_one,
+			ignore_bcknd=ignore_bcknd,
+			mask=mask)
+		return metrics,out['prediction']
 	def discriminator_train(self, source,target, 
 		source_weights=None, src_discriminator=None, 
 		tgt_discriminator=None, epochs=2000, batch_size=6, 
@@ -1140,11 +1229,14 @@ if __name__ == '__main__':
 		#source_validating=1 if args.source_validating==True else 0
 		source=domain_data_load({"dataset":args.source_dataset},
 			validating=args.source_validating,
-			ignore_bcknd=args.ignore_bcknd)
+			ignore_bcknd=args.ignore_bcknd,
+			testing_mode=args.testing_mode,
+			class_n=args.class_n)
 		target=domain_data_load({"dataset":args.target_dataset},
 			validating=args.adversarial_validating,
 			ignore_bcknd=args.ignore_bcknd,
-			all_test=True,testing_mode=args.testing_mode)
+			all_test=True,testing_mode=args.testing_mode,
+			class_n=args.class_n)
 
 	try:
 		deb.prints(source['val']['in'].shape)
@@ -1156,6 +1248,7 @@ if __name__ == '__main__':
 		print("No target val set")
 
 
+	
 
 	adda = ADDA(args.lr, args.window_len, args.channel_n,class_n=class_n,
 		encoder_mode=args.encoder_mode)
