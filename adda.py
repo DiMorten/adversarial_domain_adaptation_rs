@@ -118,12 +118,14 @@ def domain_data_load(domain,validating=0,all_test=False,
 		domain['train']['in']=domain['test']['in'].copy()
 		domain['train']['label']=domain['test']['label'].copy()
 	if testing_mode=='for_loop':
-		domain['test']['full_in']=np.load(path+"test_full_im.npy")
-		domain['test']['full_label']=np.load(path+"test_full_label.npy")
-		domain['test']['full_mask']=np.load(path+"test_full_mask.npy")
-		domain['test']['full_label']=label_to_one_hot(domain['test']['full_label'],class_n=class_n)
-		deb.prints(domain['test']['full_mask'].shape)
-
+		try:
+			domain['test']['full_in']=np.load(path+"test_full_im.npy")
+			domain['test']['full_label']=np.load(path+"test_full_label.npy")
+			domain['test']['full_mask']=np.load(path+"test_full_mask.npy")
+			domain['test']['full_label']=label_to_one_hot(domain['test']['full_label'],class_n=class_n)
+			deb.prints(domain['test']['full_mask'].shape)
+		except:
+			print("No full images...")
 
 	deb.prints(domain['train']['in'].shape)
 	deb.prints(domain['train']['label'].shape)
@@ -630,7 +632,8 @@ class ADDA():
 				if testing_mode=='for_loop':
 					metrics,data['test']['prediction']= \
 						self.test_loop_for(data['test'],
-							self.batch['test'],model,
+							self.batch['test'],
+							model=model,
 							ignore_bcknd=ignore_bcknd)
 
 				else:	
@@ -787,6 +790,7 @@ class ADDA():
 				yy = gridy[j]
 				patch = im[yy: yy + window, xx: xx + window,:]
 				label_patch = label[yy: yy + window, xx: xx + window]
+				out_patch=out['prediction'][yy: yy + window, xx: xx + window,:]
 				#mask_patch = mask[yy: yy + window, xx: xx + window]
 				if model is not None:
 					# To-do: Prediction from more than 1
@@ -796,9 +800,12 @@ class ADDA():
 				else:
 					prediction=G(fn_classify,
 						np.expand_dims(patch,axis=0))
+				prediction=np.squeeze(prediction)
 					#deb.prints(prediction.shape)
 				#deb.prints(prediction.shape)
 				#deb.prints(prediction.dtype)
+
+				prediction[out_patch!=0]=(prediction[out_patch!=0]+out_patch[out_patch!=0])/2
 				out['prediction'][yy: yy + window, xx: xx + window,:]=np.squeeze(prediction)
 
 				#	np.squeeze(prediction).argmax(axis=2).astype(np.uint8)
@@ -991,11 +998,15 @@ class ADDA():
 					#	source['train']['label'][idx0:idx1]])
 
 					# ============== IF EARLY VALIDATING ==============
-					if early_validating==True and batch_id%20:
+					if source['dataset']=='para' or source['dataset']=='acre':
+						batch_interval=20
+					else:
+						batch_interval=2
+					if early_validating==True and batch_id%batch_interval:
 						deb.prints(self.early_stop['best'])
 						#metric_most_important='f1_score_avg'
-						metric_most_important='average_acc'
-						#metric_most_important='kappa'
+						#metric_most_important='average_acc'
+						metric_most_important='kappa'
 						#metric_most_important='oa_aa'
 
 
@@ -1252,6 +1263,7 @@ if __name__ == '__main__':
 		source=domain_data_load({"dataset":args.source_dataset},
 			validating=args.source_validating,
 			ignore_bcknd=args.ignore_bcknd,
+			testing_mode=args.testing_mode,
 			class_n=args.class_n)
 			#testing_mode=args.testing_mode,
 
