@@ -123,10 +123,11 @@ def domain_data_load(domain,validating=0,all_test=False,
 			domain['test']['full_label']=np.load(path+"test_full_label.npy")
 			domain['test']['full_mask']=np.load(path+"test_full_mask.npy")
 			domain['test']['full_label']=label_to_one_hot(domain['test']['full_label'],class_n=class_n)
+			
 			deb.prints(domain['test']['full_mask'].shape)
 		except:
 			print("No full images...")
-
+			
 	deb.prints(domain['train']['in'].shape)
 	deb.prints(domain['train']['label'].shape)
 
@@ -147,6 +148,12 @@ def domain_data_load(domain,validating=0,all_test=False,
 		deb.prints(np.unique(domain['val']['label'],return_counts=True))	
 		domain['val']['label']=batch_label_to_one_hot(domain['val']['label'],class_n=class_n)
 	
+		domain['val']['full_in']=np.load(path+"val_full_im.npy")
+		domain['val']['full_label']=np.load(path+"val_full_label.npy")
+		domain['val']['full_mask']=np.load(path+"val_full_mask.npy")
+		domain['val']['full_label']=label_to_one_hot(domain['val']['full_label'],class_n=class_n)
+			
+			
 	deb.prints(domain['train']['label'].shape[0])
 
 	print("Estimating weights...")
@@ -192,7 +199,7 @@ def probabilities_to_one_hot(vals):
 	out[np.arange(len(vals)), vals.argmax(1)] = 1
 	return out
 def metrics_get(data,ignore_bcknd=1,debug=1,
-	only_one=None,mask=None): #requires batch['prediction'],batch['label']
+	only_one=None,mask=None,mask_id=None): #requires batch['prediction'],batch['label']
 	
 	# ==========================IMGS FLATTEN ==========================================#
 	predictions = ims_flatten(data['prediction'])
@@ -217,8 +224,8 @@ def metrics_get(data,ignore_bcknd=1,debug=1,
 		deb.prints(mask.shape)
 		
 		print("Metrics get: Applying mask...")
-		predictions=predictions[mask==2]
-		labels=labels[mask==2]
+		predictions=predictions[mask==mask_id]
+		labels=labels[mask==mask_id]
 
 	deb.prints(np.unique(labels,return_counts=True))   
 
@@ -500,9 +507,9 @@ class ADDA():
 		
 		return disc
 
-	def source_model_train(self, model, data, batch_size=6, epochs=2000, \
+	def source_model_train(self, model, data, batch_size=6, epochs=100, \
 		save_interval=1, start_epoch=0,training=True,testing=1,
-		weights_save=False,validating=0,patience=10,
+		weights_save=True,validating=0,patience=10,
 		validation_data=None,ignore_bcknd=1,
 		testing_mode=None):
 		self.training=training
@@ -511,6 +518,7 @@ class ADDA():
 		if validating==1:
 			print("Loading val data...")
 			data['val']=validation_data.copy()
+			deb.prints(data['val']['full_in'].shape)
 		self.weights_save=weights_save
 		# Define source data generator
 		#batch_generator={}
@@ -549,7 +557,7 @@ class ADDA():
 		count=0
 		errSource=0
 		epoch=0
-		niter=500
+		niter=100
 		diplay_iters=200
 
 		batch = {'train': {}, 'test': {}, 'val':{}}
@@ -584,9 +592,8 @@ class ADDA():
 			niter=1
 
 
-		
 		for epoch in range(niter):
-
+			print("Starting epoch...")
 			
 			self.metrics['test']['loss'] = np.zeros((1, 2))
 			if training==True:
@@ -617,11 +624,18 @@ class ADDA():
 			# ============ VAL LOOP ============================== #
 
 			if validating==1:
+				print("Validating...")
+				metrics_val,_=self.test_loop_for(
+					data['val'],
+					self.batch['val'],
+					model=model,
+					ignore_bcknd=ignore_bcknd,
+					mask_id=3) #val id
 
-				metrics_val,_=self.test_loop_source(data['val'],
-					self.batch['val'],model,
-					self.metrics['val'],
-					ignore_bcknd=ignore_bcknd)
+				#metrics_val,_=self.test_loop_source(data['val'],
+				#	self.batch['val'],model,
+				#	self.metrics['val'],
+				#	ignore_bcknd=ignore_bcknd)
 				self.early_stop_check(metrics_val,epoch,
 					most_important='f1_score_avg')
 
@@ -647,6 +661,7 @@ class ADDA():
 				print("Testing was skipped")
 			
 			print("Epoch={}".format(epoch)) 
+			
 
 			# ========================== EARLY STOP ===================
 			if validating==1:
@@ -654,6 +669,7 @@ class ADDA():
 					print("Saving weights...")
 					#self.early_stop['best_predictions']=data['test']['prediction']
 					model.save_weights('results_val/source_weights_'+data['dataset']+'.h5')
+				deb.prints(data['val']['full_in'].shape)
 					
 				print(self.early_stop['signal'])
 				if self.early_stop["signal"]==True:
@@ -748,17 +764,17 @@ class ADDA():
 		model=None,metric_only_one=None,
 		batch_test_stats=True,
 		ignore_bcknd=1,fn_classify=None,G=None,
-		window=32,overlap=0):
+		window=32,overlap=0,mask_id=2): #mask id defaults to test
 		
 		fname=sys._getframe().f_code.co_name
 
 		im=data['full_in'].copy()
-		del data['full_in']
+		#del data['full_in']
 		mask=data['full_mask'].copy()
 		deb.prints(np.unique(mask,return_counts=True))
-		del data['full_mask']
+		#del data['full_mask']
 		label=data['full_label'].copy()
-		del data['full_label']
+		#del data['full_label']
 
 
 		deb.prints(window,fname)
@@ -784,14 +800,16 @@ class ADDA():
 		#======================== START IMG LOOP ==================================#
 		for i in range(len(gridx)):
 			for j in range(len(gridy)):
-				if counter % 10000000 == 0:
-					deb.prints(counter,fname)
+				#if counter % 10000000 == 0:
+				#	deb.prints(counter,fname)
 				xx = gridx[i]
 				yy = gridy[j]
 				patch = im[yy: yy + window, xx: xx + window,:]
 				label_patch = label[yy: yy + window, xx: xx + window]
 				out_patch=out['prediction'][yy: yy + window, xx: xx + window,:]
-				#mask_patch = mask[yy: yy + window, xx: xx + window]
+				mask_patch = mask[yy: yy + window, xx: xx + window]
+				if np.all(mask_patch!=mask_id):
+					continue
 				if model is not None:
 					# To-do: Prediction from more than 1
 					prediction=model.predict(
@@ -819,7 +837,7 @@ class ADDA():
 		metrics=metrics_get(out,debug=1,
 			only_one=metric_only_one,
 			ignore_bcknd=ignore_bcknd,
-			mask=mask)
+			mask=mask,mask_id=mask_id)
 		return metrics,out['prediction']
 	def discriminator_train(self, source,target, 
 		source_weights=None, src_discriminator=None, 
@@ -1005,8 +1023,8 @@ class ADDA():
 					if early_validating==True and batch_id%batch_interval:
 						deb.prints(self.early_stop['best'])
 						#metric_most_important='f1_score_avg'
-						#metric_most_important='average_acc'
-						metric_most_important='kappa'
+						metric_most_important='average_acc'
+						#metric_most_important='kappa'
 						#metric_most_important='oa_aa'
 
 
@@ -1085,10 +1103,12 @@ class ADDA():
 					#		self.batch['test'],)
 
 					#else:
-					metrics,_=self.test_loop(target['test'],
+					metrics,prediction=self.test_loop_for(
+						target['test'],
 						self.batch['test'],
-						fn_classify=target['fn_classify'],G=G)
-
+						fn_classify=target['fn_classify'],
+						G=G,
+						ignore_bcknd=ignore_bcknd)
 				if source_testing==True:						
 					metrics,_=self.test_loop(source['test'],
 						self.batch['test'],source['fn_classify'],G)
@@ -1098,6 +1118,37 @@ class ADDA():
 			#deb.prints(idx1)
 			print("Epoch={}".format(epoch))	
 
+			metric_most_important='average_acc'
+						
+			metrics_val,_=self.test_loop(target['val'],
+				self.batch['val'],target['fn_classify'],G,
+				metric_only_one=metric_most_important,
+				ignore_bcknd=ignore_bcknd)
+			#metrics_val,_=self.test_loop_for(target['val'],
+			#	self.batch['val'],
+			#	fn_classify=target['fn_classify'],
+			#	G=G,
+			#	metric_only_one=metric_most_important,
+			#	ignore_bcknd=ignore_bcknd)
+			
+			self.early_stop_check(metrics_val,epoch,
+				most_important=metric_most_important)
+
+			if self.early_stop['best_updated']==True:
+				print("BEST METRIC UPDATED")
+				target['encoder'].save_weights('result_adv/target_encoder_best.h5')
+				discriminator.save_weights('result_adv/discriminator_best.h5')
+			if self.early_stop["signal"]==True:
+				target['encoder'].load_weights('result_adv/target_encoder_best.h5')
+				discriminator.load_weights('result_adv/discriminator_best.h5')
+				print("Early stop; testing...")
+				if testing_mode=='for_loop':
+					metrics,prediction=self.test_loop_for(
+						target['test'],
+						self.batch['test'],
+						fn_classify=target['fn_classify'],
+						G=G,
+						ignore_bcknd=ignore_bcknd)
 			# =================== EARLY STOP CHECK ========================
 
 			#if target_validating==1:
@@ -1272,7 +1323,9 @@ if __name__ == '__main__':
 			ignore_bcknd=args.ignore_bcknd,
 			all_test=True,testing_mode=args.testing_mode,
 			class_n=args.class_n)
-
+		deb.prints(target['test']['full_in'].shape)
+		deb.prints(source['test']['full_in'].shape)
+		
 	try:
 		deb.prints(source['val']['in'].shape)
 	except:
@@ -1299,11 +1352,15 @@ if __name__ == '__main__':
 
 		if args.eval_source_classifier is None:
 			print("Training source classifier...")
+			if args.source_validating==1:
+				validation_data=target['val']
+			else:
+				validation_data=None
 			adda.source_model_train(source_model, data=source, \
 				start_epoch=args.start_epoch-1,
 				testing=args.testing,weights_save=args.weights_save,
 				validating=args.source_validating, 
-				validation_data=source['val'],
+				validation_data=validation_data,
 				ignore_bcknd=args.ignore_bcknd) 
 		else:
 			adda.source_model_train(source_model, data=source, training=False, \
