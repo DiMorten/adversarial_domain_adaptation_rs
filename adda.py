@@ -84,7 +84,7 @@ def G(fn_generate, X):
 def stats_print(x):
 	print(np.min(x),np.max(x),np.average(x),x.dtype)
 def domain_data_load(domain,validating=0,all_test=False,
-	ignore_bcknd=1):
+	ignore_bcknd=1,testing_mode=None):
 
 	path='../wildfire_fcn/src/patch_extract2/compact/'+domain['dataset']+'/'
 	domain['train']={}
@@ -97,6 +97,11 @@ def domain_data_load(domain,validating=0,all_test=False,
 	if all_test==True:
 		domain['train']['in']=domain['test']['in'].copy()
 		domain['train']['label']=domain['test']['label'].copy()
+		if testing_mode=='for_loop':
+			domain['test']['full_in']=np.load(path+"test_full_im.npy")
+			domain['test']['full_label']=np.load(path+"test_full_label.npy")
+			domain['test']['full_mask']=np.load(path+"test_full_mask.npy")
+
 
 	deb.prints(domain['train']['in'].shape)
 	deb.prints(domain['train']['label'].shape)
@@ -705,7 +710,16 @@ class ADDA():
 		#self.early_stop_check(metrics_val,epoch,most_important='f1_score')
 		return metrics,data['prediction']
 
-	def test_loop_for(self,data,batch,)
+	#def test_loop_for(self,data,batch,model,metrics,
+	#	metric_only_one=None,batch_test_stats=True,
+	#	ignore_bcknd=1,fn_classify=None,G=None):
+
+
+
+
+
+
+
 	def discriminator_train(self, source,target, 
 		source_weights=None, src_discriminator=None, 
 		tgt_discriminator=None, epochs=2000, batch_size=6, 
@@ -1130,8 +1144,8 @@ if __name__ == '__main__':
 		target=domain_data_load({"dataset":args.target_dataset},
 			validating=args.adversarial_validating,
 			ignore_bcknd=args.ignore_bcknd,
-			all_test=True)
-				
+			all_test=True,testing_mode=args.testing_mode)
+
 	try:
 		deb.prints(source['val']['in'].shape)
 	except:
