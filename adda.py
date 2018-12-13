@@ -122,6 +122,7 @@ def domain_data_load(domain,validating=0,all_test=False,
 		domain['test']['full_label']=np.load(path+"test_full_label.npy")
 		domain['test']['full_mask']=np.load(path+"test_full_mask.npy")
 		domain['test']['full_label']=label_to_one_hot(domain['test']['full_label'],class_n=class_n)
+		deb.prints(domain['test']['full_mask'].shape)
 
 
 	deb.prints(domain['train']['in'].shape)
@@ -191,7 +192,6 @@ def probabilities_to_one_hot(vals):
 def metrics_get(data,ignore_bcknd=1,debug=1,
 	only_one=None,mask=None): #requires batch['prediction'],batch['label']
 	
-	mask=np.reshape(mask,-1)
 	# ==========================IMGS FLATTEN ==========================================#
 	predictions = ims_flatten(data['prediction'])
 	predictions=probabilities_to_one_hot(predictions)
@@ -209,6 +209,8 @@ def metrics_get(data,ignore_bcknd=1,debug=1,
 		labels=labels[labels>0]
 
 	if mask is not None:
+		mask=np.reshape(mask,-1)
+	
 		deb.prints(labels.shape)
 		deb.prints(mask.shape)
 		
@@ -629,7 +631,6 @@ class ADDA():
 					metrics,data['test']['prediction']= \
 						self.test_loop_for(data['test'],
 							self.batch['test'],model,
-							self.metrics['test'],
 							ignore_bcknd=ignore_bcknd)
 
 				else:	
@@ -740,8 +741,9 @@ class ADDA():
 		#self.early_stop_check(metrics_val,epoch,most_important='f1_score')
 		return metrics,data['prediction']
 
-	def test_loop_for(self,data,batch,model,metrics,
-		metric_only_one=None,batch_test_stats=True,
+	def test_loop_for(self,data,batch,
+		model=None,metric_only_one=None,
+		batch_test_stats=True,
 		ignore_bcknd=1,fn_classify=None,G=None,
 		window=32,overlap=0):
 		
@@ -786,11 +788,14 @@ class ADDA():
 				patch = im[yy: yy + window, xx: xx + window,:]
 				label_patch = label[yy: yy + window, xx: xx + window]
 				#mask_patch = mask[yy: yy + window, xx: xx + window]
-				if 1==1:
+				if model is not None:
 					# To-do: Prediction from more than 1
 					prediction=model.predict(
 						np.expand_dims(patch,axis=0),
 						batch_size=1)
+				else:
+					prediction=G(fn_classify,
+						np.expand_dims(patch,axis=0))
 					#deb.prints(prediction.shape)
 				#deb.prints(prediction.shape)
 				#deb.prints(prediction.dtype)
@@ -814,7 +819,8 @@ class ADDA():
 		tgt_discriminator=None, epochs=2000, batch_size=6, 
 		save_interval=1, start_epoch=0, num_batches=100,
 		target_validating=1, patience=150, 
-		early_validating=True, ignore_bcknd=1):   
+		early_validating=True, ignore_bcknd=1,
+		testing_mode=None):   
 		
 		use_lsgan = True
 		lrD = 2e-4
@@ -1007,9 +1013,19 @@ class ADDA():
 						if self.early_stop["signal"]==True:
 							target['encoder'].load_weights('result_adv/target_encoder_best.h5')
 							discriminator.load_weights('result_adv/discriminator_best.h5')
-							metrics,prediction=self.test_loop(target['test'],
-								self.batch['test'],target['fn_classify'],G,
-								ignore_bcknd=ignore_bcknd)
+							print("Early stop; testing...")
+							if testing_mode=='for_loop':
+								metrics,prediction=self.test_loop_for(
+									target['test'],
+									self.batch['test'],
+									fn_classify=target['fn_classify'],
+									G=G,
+									ignore_bcknd=ignore_bcknd)
+
+							else:
+								metrics,prediction=self.test_loop(target['test'],
+									self.batch['test'],target['fn_classify'],G,
+									ignore_bcknd=ignore_bcknd)
 
 							print("EARLY STOP EPOCH",epoch,metrics)
 							np.save("result_adv/"+target['dataset']+
@@ -1051,10 +1067,16 @@ class ADDA():
 				test_signal=True
 
 			if test_signal==True:
-
+				print("Testing...")
 				if target_testing==True:
+					#if testing_mode=='for_loop':
+					#	metrics,_=self.test_loop_for(target['test'],
+					#		self.batch['test'],)
+
+					#else:
 					metrics,_=self.test_loop(target['test'],
-						self.batch['test'],target['fn_classify'],G)
+						self.batch['test'],
+						fn_classify=target['fn_classify'],G=G)
 
 				if source_testing==True:						
 					metrics,_=self.test_loop(source['test'],
@@ -1230,8 +1252,9 @@ if __name__ == '__main__':
 		source=domain_data_load({"dataset":args.source_dataset},
 			validating=args.source_validating,
 			ignore_bcknd=args.ignore_bcknd,
-			testing_mode=args.testing_mode,
 			class_n=args.class_n)
+			#testing_mode=args.testing_mode,
+
 		target=domain_data_load({"dataset":args.target_dataset},
 			validating=args.adversarial_validating,
 			ignore_bcknd=args.ignore_bcknd,
