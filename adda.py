@@ -212,16 +212,19 @@ def metrics_get(data,ignore_bcknd=1,debug=1,
 	
 	deb.prints(np.unique(labels,return_counts=True))   
 
+	if mask is not None:
+		mask=np.reshape(mask,-1)
+
 	if ignore_bcknd==1:
 		print("Ignoring background...")
 		predictions=predictions[labels>0]
+		if mask is not None:
+			mask=mask[labels>0]
 		labels=labels[labels>0]
-
-	if mask is not None:
-		mask=np.reshape(mask,-1)
 	
+	if mask is not None:
+			
 		deb.prints(labels.shape)
-		deb.prints(mask.shape)
 		
 		print("Metrics get: Applying mask...")
 		predictions=predictions[mask==mask_id]
@@ -509,7 +512,7 @@ class ADDA():
 
 	def source_model_train(self, model, data, batch_size=6, epochs=100, \
 		save_interval=1, start_epoch=0,training=True,testing=1,
-		weights_save=True,validating=0,patience=10,
+		weights_save=True,validating=0,patience=20,
 		validation_data=None,ignore_bcknd=1,
 		testing_mode=None):
 		self.training=training
@@ -625,17 +628,17 @@ class ADDA():
 
 			if validating==1:
 				print("Validating...")
-				metrics_val,_=self.test_loop_for(
-					data['val'],
-					self.batch['val'],
-					model=model,
-					ignore_bcknd=ignore_bcknd,
-					mask_id=3) #val id
+				#metrics_val,_=self.test_loop_for(
+				#	data['val'],
+				#	self.batch['val'],
+				#	model=model,
+				#	ignore_bcknd=ignore_bcknd,
+				#	mask_id=3) #val id
 
-				#metrics_val,_=self.test_loop_source(data['val'],
-				#	self.batch['val'],model,
-				#	self.metrics['val'],
-				#	ignore_bcknd=ignore_bcknd)
+				metrics_val,_=self.test_loop_source(data['val'],
+					self.batch['val'],model,
+					self.metrics['val'],
+					ignore_bcknd=ignore_bcknd)
 				self.early_stop_check(metrics_val,epoch,
 					most_important='f1_score_avg')
 
@@ -833,6 +836,7 @@ class ADDA():
 #					out[:,yy: yy + window, xx: xx + window,:]					
 
 		out['label']=label.copy()
+		deb.prints(out['label'].shape)
 		del label
 		metrics=metrics_get(out,debug=1,
 			only_one=metric_only_one,
@@ -1017,7 +1021,7 @@ class ADDA():
 
 					# ============== IF EARLY VALIDATING ==============
 					if source['dataset']=='para' or source['dataset']=='acre':
-						batch_interval=20
+						batch_interval=10
 					else:
 						batch_interval=2
 					if early_validating==True and batch_id%batch_interval:
