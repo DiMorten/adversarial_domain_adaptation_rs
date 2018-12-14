@@ -60,6 +60,7 @@ ap.add_argument('-ibcknd', '--ignore_bcknd', type=int,default=1, help="Class num
 ap.add_argument('-em', '--encoder_mode',default='basic', help="Gen mode. basic or densenet")
 
 ap.add_argument('-tm', '--testing_mode',default=None, help="Testing mode can be 'for_loop'")
+ap.add_argument('-vm', '--validating_mode',default=None, help="Validating mode can be 'loss'")
 
 args = ap.parse_args()
 deb.prints(args.testing_mode)
@@ -214,6 +215,7 @@ def metrics_get(data,ignore_bcknd=1,debug=1,
 
 	if mask is not None:
 		mask=np.reshape(mask,-1)
+		deb.prints(np.unique(mask,return_counts=True))
 
 	if ignore_bcknd==1:
 		print("Ignoring background...")
@@ -628,17 +630,17 @@ class ADDA():
 
 			if validating==1:
 				print("Validating...")
-				#metrics_val,_=self.test_loop_for(
-				#	data['val'],
-				#	self.batch['val'],
-				#	model=model,
-				#	ignore_bcknd=ignore_bcknd,
-				#	mask_id=3) #val id
+				metrics_val,_=self.test_loop_for(
+					data['val'],
+					self.batch['val'],
+					model=model,
+					ignore_bcknd=ignore_bcknd,
+					mask_id=3) #val id
 
-				metrics_val,_=self.test_loop_source(data['val'],
-					self.batch['val'],model,
-					self.metrics['val'],
-					ignore_bcknd=ignore_bcknd)
+				#metrics_val,_=self.test_loop_source(data['val'],
+				#	self.batch['val'],model,
+				#	self.metrics['val'],
+				#	ignore_bcknd=ignore_bcknd)
 				self.early_stop_check(metrics_val,epoch,
 					most_important='f1_score_avg')
 
@@ -778,7 +780,6 @@ class ADDA():
 		#del data['full_mask']
 		label=data['full_label'].copy()
 		#del data['full_label']
-
 
 		deb.prints(window,fname)
 		deb.prints(overlap,fname)
@@ -1021,7 +1022,7 @@ class ADDA():
 
 					# ============== IF EARLY VALIDATING ==============
 					if source['dataset']=='para' or source['dataset']=='acre':
-						batch_interval=10
+						batch_interval=20
 					else:
 						batch_interval=2
 					if early_validating==True and batch_id%batch_interval:
@@ -1357,7 +1358,7 @@ if __name__ == '__main__':
 		if args.eval_source_classifier is None:
 			print("Training source classifier...")
 			if args.source_validating==1:
-				validation_data=target['val']
+				validation_data=source['val']
 			else:
 				validation_data=None
 			adda.source_model_train(source_model, data=source, \
