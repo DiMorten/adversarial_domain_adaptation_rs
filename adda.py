@@ -630,19 +630,23 @@ class ADDA():
 
 			if validating==1:
 				print("Validating...")
+				most_important='average_acc'
 				metrics_val,_=self.test_loop_for(
 					data['val'],
 					self.batch['val'],
 					model=model,
 					ignore_bcknd=ignore_bcknd,
-					mask_id=3) #val id
+					mask_id=3,
+					metric_only_one=most_important) #val id
 
 				#metrics_val,_=self.test_loop_source(data['val'],
 				#	self.batch['val'],model,
 				#	self.metrics['val'],
 				#	ignore_bcknd=ignore_bcknd)
+				#most_important='loss'
+
 				self.early_stop_check(metrics_val,epoch,
-					most_important='f1_score_avg')
+					most_important=most_important)
 
 			#==========================TEST LOOP================================================#
 		
@@ -689,10 +693,16 @@ class ADDA():
 				index = idx
 				break
 		return index		
-	def early_stop_check(self,metrics,epoch,most_important='overall_acc'):
+	def early_stop_check(self,metrics,epoch,
+		most_important='overall_acc',
+		minimize=False):
 		deb.prints(metrics[most_important])
 
-		if metrics[most_important]>=self.early_stop['best'] and self.early_stop["signal"]==False:
+		if minimize==False:
+			condition=metrics[most_important]>self.early_stop['best']
+		else:
+			condition=metrics[most_important]<self.early_stop['best']		
+		if condition and self.early_stop["signal"]==False:
 			self.early_stop['best']=metrics[most_important]
 			self.early_stop['count']=0
 			print("Best metric updated")
@@ -739,7 +749,8 @@ class ADDA():
 			ignore_bcknd=ignore_bcknd)
 		return metrics,data['prediction']
 	def test_loop(self,data,batch,fn_classify,G,
-		metric_only_one=None,ignore_bcknd=1):		
+		metric_only_one=None,ignore_bcknd=1,
+		loss=None):		
 
 		data['prediction']=np.zeros_like(data['label'])
 		deb.prints(data['prediction'].shape)
@@ -759,9 +770,15 @@ class ADDA():
 			data['prediction'][idx0:idx1]=np.squeeze(G(
 				fn_classify, data['in'][idx0:idx1]))
 		deb.prints(data['label'].shape)		
-		metrics=metrics_get(data,debug=1,
-			only_one=metric_only_one,
-			ignore_bcknd=ignore_bcknd)
+		if metric_only_one=='loss':
+			metrics={'loss':loss}
+		else:
+			metrics=metrics_get(data,debug=1,
+				only_one=metric_only_one,
+				ignore_bcknd=ignore_bcknd)
+			metrics['loss']=loss
+
+
 		#self.early_stop_check(metrics_val,epoch,most_important='f1_score')
 		return metrics,data['prediction']
 
@@ -769,7 +786,7 @@ class ADDA():
 		model=None,metric_only_one=None,
 		batch_test_stats=True,
 		ignore_bcknd=1,fn_classify=None,G=None,
-		window=32,overlap=0,mask_id=2): #mask id defaults to test
+		window=32,overlap=0,mask_id=2,loss=None): #mask id defaults to test
 		
 		fname=sys._getframe().f_code.co_name
 
@@ -800,7 +817,7 @@ class ADDA():
 		counter=0
 		out={}
 		out['prediction']=np.zeros_like(label).astype(np.float32)
-		
+		loss=0
 		#======================== START IMG LOOP ==================================#
 		for i in range(len(gridx)):
 			for j in range(len(gridy)):
@@ -819,9 +836,12 @@ class ADDA():
 					prediction=model.predict(
 						np.expand_dims(patch,axis=0),
 						batch_size=1)
+					loss=model.test_on_batch(np.expand_dims(patch,axis=0),
+						np.expand_dims(label_patch,axis=0))[0]
 				else:
 					prediction=G(fn_classify,
 						np.expand_dims(patch,axis=0))
+
 				prediction=np.squeeze(prediction)
 					#deb.prints(prediction.shape)
 				#deb.prints(prediction.shape)
@@ -833,16 +853,20 @@ class ADDA():
 				#	np.squeeze(prediction).argmax(axis=2).astype(np.uint8)
 
 				counter=counter+1
-
+		loss/=counter
 #					out[:,yy: yy + window, xx: xx + window,:]					
 
 		out['label']=label.copy()
 		deb.prints(out['label'].shape)
 		del label
-		metrics=metrics_get(out,debug=1,
-			only_one=metric_only_one,
-			ignore_bcknd=ignore_bcknd,
-			mask=mask,mask_id=mask_id)
+		if metric_only_one=='loss':
+			metrics={'loss':loss}
+		else:
+			metrics=metrics_get(out,debug=1,
+				only_one=metric_only_one,
+				ignore_bcknd=ignore_bcknd,
+				mask=mask,mask_id=mask_id)
+			metrics['loss']=loss
 		return metrics,out['prediction']
 	def discriminator_train(self, source,target, 
 		source_weights=None, src_discriminator=None, 
@@ -934,6 +958,8 @@ class ADDA():
 		netC_train = K.function([target['encoder_in'],
 								C_label],[C_loss],
 								training_updates)
+		netC_loss_view = K.function([target['encoder_in'],
+								C_label],[C_loss])
 		
 		# ===================== Begin Training ========================= #
 		source_testing=False
@@ -970,12 +996,22 @@ class ADDA():
 		#target_validating=False
 		
 		# Early stop init ===========
-	
+		#metric_most_important='f1_score_avg'
+		metric_most_important='average_acc'
+		#metric_most_important='kappa'
+		#metric_most_important='oa_aa'
+		#metric_most_important='loss'
+
 		self.early_stop={'best':0,
 					'count':0,
 					'signal':False,
 					'patience':patience,
-					'best_updated':False}
+					'best_updated':False,
+					'minimize':False}
+		if metric_most_important=='loss':
+			self.early_stop['minimize']=True
+			self.early_stop['best']=9999
+
 
 		self.metricsG['train']['loss'] = np.zeros((1, 2))
 		self.metricsD['train']['loss'] = np.zeros((1, 2))
@@ -998,6 +1034,7 @@ class ADDA():
 				if D_training==True:
 					self.metricsD['train']['loss'] = np.zeros((1, 2))
 				err_segmentation = np.zeros((1, 2))
+				C_loss=0
 				for batch_id in range(0, self.batch['train']['n']):
 					idx0 = batch_id*self.batch['train']['size']
 					idx1 = (batch_id+1)*self.batch['train']['size']
@@ -1012,7 +1049,8 @@ class ADDA():
 					if D_training==True:
 						self.metricsD['train']['loss'] += netD_train([source['train']['in'][idx0:idx1],
 									target['train']['in'][idx0:idx1]])
-
+					C_loss+=netC_loss_view([source['train']['in'][idx0:idx1],
+						source['train']['label'][idx0:idx1]])[0]
 					#err_segmentation = netC_train([source['train']['in'][idx0:idx1],
 					#	source['train']['label'][idx0:idx1]])
 					#err_segmentation = netC_train([source['train']['in'][idx0:idx1],
@@ -1026,19 +1064,28 @@ class ADDA():
 					else:
 						batch_interval=2
 					if early_validating==True and batch_id%batch_interval:
+						deb.prints(batch_id)
 						deb.prints(self.early_stop['best'])
-						#metric_most_important='f1_score_avg'
-						metric_most_important='average_acc'
-						#metric_most_important='kappa'
-						#metric_most_important='oa_aa'
 
+						
 
 						metrics_val,_=self.test_loop(target['val'],
 							self.batch['val'],target['fn_classify'],G,
 							metric_only_one=metric_most_important,
-							ignore_bcknd=ignore_bcknd)
+							ignore_bcknd=ignore_bcknd,
+							loss=C_loss)
+
+						#metrics_val,_=self.test_loop_for(
+						#target['val'],
+						#self.batch['val'],
+						#fn_classify=target['fn_classify'],
+						#G=G,
+						#ignore_bcknd=ignore_bcknd,
+						#loss=C_loss)
+
 						self.early_stop_check(metrics_val,early_epoch,
-							most_important=metric_most_important)
+							most_important=metric_most_important,minimize=self.early_stop['minimize'])
+						C_loss=0
 
 						if self.early_stop['best_updated']==True:
 							print("BEST METRIC UPDATED")
@@ -1123,6 +1170,7 @@ class ADDA():
 			#deb.prints(idx1)
 			print("Epoch={}".format(epoch))	
 
+#			metric_most_important='average_acc'
 			metric_most_important='average_acc'
 						
 			metrics_val,_=self.test_loop(target['val'],
@@ -1358,7 +1406,7 @@ if __name__ == '__main__':
 		if args.eval_source_classifier is None:
 			print("Training source classifier...")
 			if args.source_validating==1:
-				validation_data=source['val']
+				validation_data=target['val']
 			else:
 				validation_data=None
 			adda.source_model_train(source_model, data=source, \
