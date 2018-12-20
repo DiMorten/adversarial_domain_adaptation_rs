@@ -623,7 +623,9 @@ class ADDA():
 					if early_validating==True and batch_id%batch_interval==0:
 						deb.prints(batch_id)
 						deb.prints(self.early_stop['best'])
-						metric_most_important='average_acc'
+						#metric_most_important='average_acc'
+						metric_most_important='loss'
+						
 						metrics_val,_=self.test_loop_source(data['val'],
 							self.batch['val'],model,
 							self.metrics['val'],
