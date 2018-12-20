@@ -514,9 +514,9 @@ class ADDA():
 
 	def source_model_train(self, model, data, batch_size=6, epochs=100, \
 		save_interval=1, start_epoch=0,training=True,testing=1,
-		weights_save=True,validating=0,patience=20,
+		weights_save=True,validating=0,patience=150,
 		validation_data=None,ignore_bcknd=1,
-		testing_mode=None):
+		testing_mode=None, early_validating=True):
 		self.training=training
 		deb.prints(validating)
 		batch_size=6
@@ -598,6 +598,7 @@ class ADDA():
 
 
 		for epoch in range(niter):
+			early_epoch=0
 			print("Starting epoch...")
 			
 			self.metrics['test']['loss'] = np.zeros((1, 2))
@@ -614,6 +615,31 @@ class ADDA():
 
 					self.metrics['train']['loss'] += model.train_on_batch(
 						batch['train']['in'], batch['train']['label'])      # Accumulated epoch
+					# ========= EARLY VALIDATION ==================
+					if data['dataset']=='para' or data['dataset']=='acre':
+						batch_interval=20
+					else:
+						batch_interval=2
+					if early_validating==True and batch_id%batch_interval==0:
+						deb.prints(batch_id)
+						deb.prints(self.early_stop['best'])
+						metric_most_important='average_acc'
+						metrics_val,_=self.test_loop_source(data['val'],
+							self.batch['val'],model,
+							self.metrics['val'],
+							ignore_bcknd=ignore_bcknd,
+							metric_only_one=metric_most_important)					
+						self.early_stop_check(metrics_val,epoch,
+							most_important=metric_most_important)
+
+						if self.early_stop['best_updated']==True:
+							print("Saving weights...")
+							#self.early_stop['best_predictions']=data['test']['prediction']
+							model.save_weights('results_val/source_weights_'+data['dataset']+'.h5')
+						if self.early_stop["signal"]==True:
+							print("EARLY STOP EPOCH",epoch)
+							assert 1==2
+
 
 				# Average epoch loss
 				self.metrics['train']['loss'] /= self.batch['train']['n']
