@@ -631,14 +631,18 @@ class ADDA():
 						deb.prints(self.early_stop['best'])
 						#metric_most_important='average_acc'
 						#metric_most_important='loss'
-						
-						metrics_val,_=self.test_loop_for(
-							data['val'],
-							self.batch['val'],
-							model=model,
+						metrics_val,_=self.test_loop_source(data['val'],
+							self.batch['val'],model,
+							self.metrics['val'],
 							ignore_bcknd=ignore_bcknd,
-							mask_id=3,
-							metric_only_one=metric_most_important)
+							metric_only_one=metric_most_important)						
+						#metrics_val,_=self.test_loop_for(
+						#	data['val'],
+						#	self.batch['val'],
+						#	model=model,
+						#	ignore_bcknd=ignore_bcknd,
+						#	mask_id=3,
+						#	metric_only_one=metric_most_important)
 						self.early_stop_check(metrics_val,epoch,
 							most_important=metric_most_important,
 							minimize=self.early_stop['minimize'])
@@ -854,7 +858,8 @@ class ADDA():
 		counter=0
 		out={}
 		out['prediction']=np.zeros_like(label).astype(np.float32)
-		loss=0
+		if model is not None:
+			loss=0
 		#======================== START IMG LOOP ==================================#
 		for i in range(len(gridx)):
 			for j in range(len(gridy)):
@@ -1034,10 +1039,10 @@ class ADDA():
 		
 		# Early stop init ===========
 		#metric_most_important='f1_score_avg'
-		metric_most_important='average_acc'
+		#metric_most_important='average_acc'
 		#metric_most_important='kappa'
 		#metric_most_important='oa_aa'
-		#metric_most_important='loss'
+		metric_most_important='loss'
 
 		self.early_stop={'best':0,
 					'count':0,
@@ -1086,8 +1091,8 @@ class ADDA():
 					if D_training==True:
 						self.metricsD['train']['loss'] += netD_train([source['train']['in'][idx0:idx1],
 									target['train']['in'][idx0:idx1]])
-					C_loss+=netC_loss_view([source['train']['in'][idx0:idx1],
-						source['train']['label'][idx0:idx1]])[0]
+					C_loss+=netC_loss_view([target['val']['in'][idx0:idx1],
+						target['val']['label'][idx0:idx1]])[0]
 					#err_segmentation = netC_train([source['train']['in'][idx0:idx1],
 					#	source['train']['label'][idx0:idx1]])
 					#err_segmentation = netC_train([source['train']['in'][idx0:idx1],
@@ -1100,10 +1105,10 @@ class ADDA():
 						batch_interval=20
 					else:
 						batch_interval=2
-					if early_validating==True and batch_id%batch_interval:
+					if early_validating==True and batch_id%batch_interval==0:
 						deb.prints(batch_id)
 						deb.prints(self.early_stop['best'])
-
+						deb.prints(C_loss)
 						
 
 						metrics_val,_=self.test_loop(target['val'],
@@ -1119,7 +1124,7 @@ class ADDA():
 						#G=G,
 						#ignore_bcknd=ignore_bcknd,
 						#loss=C_loss)
-
+						deb.prints(metrics_val['loss'])
 						self.early_stop_check(metrics_val,early_epoch,
 							most_important=metric_most_important,minimize=self.early_stop['minimize'])
 						C_loss=0
