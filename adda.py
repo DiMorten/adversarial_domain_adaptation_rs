@@ -583,11 +583,17 @@ class ADDA():
 			self.batch['val']['n'] = data['val']['in'].shape[0] // self.batch['val']['size']
 			self.batch['val']['flag']=0
 
+			metric_most_important='loss'
+
 			self.early_stop={'best':0,
 					'count':0,
 					'signal':False,
-					'patience':patience}
+					'patience':patience,
+					'minimize':False}
 			deb.prints(self.batch['val']['n'])
+			if metric_most_important=='loss':
+				self.early_stop['minimize']=True
+				self.early_stop['best']=9999
 			print("Initializing validation...")
 
 		deb.prints(self.batch['train']['n'])
@@ -624,15 +630,18 @@ class ADDA():
 						deb.prints(batch_id)
 						deb.prints(self.early_stop['best'])
 						#metric_most_important='average_acc'
-						metric_most_important='loss'
+						#metric_most_important='loss'
 						
-						metrics_val,_=self.test_loop_source(data['val'],
-							self.batch['val'],model,
-							self.metrics['val'],
+						metrics_val,_=self.test_loop_for(
+							data['val'],
+							self.batch['val'],
+							model=model,
 							ignore_bcknd=ignore_bcknd,
-							metric_only_one=metric_most_important)					
+							mask_id=3,
+							metric_only_one=metric_most_important)
 						self.early_stop_check(metrics_val,epoch,
-							most_important=metric_most_important)
+							most_important=metric_most_important,
+							minimize=self.early_stop['minimize'])
 
 						if self.early_stop['best_updated']==True:
 							print("Saving weights...")
@@ -656,7 +665,7 @@ class ADDA():
 				print("Training was skipped")
 			# ============ VAL LOOP ============================== #
 
-			if validating==1:
+			if validating==1 and early_validating==False:
 				print("Validating...")
 				most_important='average_acc'
 				metrics_val,_=self.test_loop_for(
@@ -864,7 +873,7 @@ class ADDA():
 					prediction=model.predict(
 						np.expand_dims(patch,axis=0),
 						batch_size=1)
-					loss=model.test_on_batch(np.expand_dims(patch,axis=0),
+					loss+=model.test_on_batch(np.expand_dims(patch,axis=0),
 						np.expand_dims(label_patch,axis=0))[0]
 				else:
 					prediction=G(fn_classify,
