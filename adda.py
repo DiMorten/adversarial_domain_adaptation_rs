@@ -4,7 +4,7 @@ from keras.datasets import mnist
 from keras.layers import Input, Dense, Reshape, Flatten, Dropout
 from keras.layers import BatchNormalization, Activation, ZeroPadding2D, MaxPooling2D
 from keras.layers.advanced_activations import LeakyReLU
-from keras.layers.convolutional import UpSampling2D, Conv2D
+from keras.layers.convolutional import UpSampling2D, Conv2D, Conv2DTranspose
 from keras.models import Sequential, Model, clone_model
 from keras.preprocessing.image import ImageDataGenerator
 from keras.optimizers import Adam, Adagrad
@@ -335,6 +335,8 @@ class ADDA():
 		class_n=3, encoder_mode='basic'):
 		# Input shape
 		self.encoder_mode=encoder_mode
+		#self.encoder_mode='densenet'
+		#self.encoder_mode='vgg'
 		self.img_rows = window_len
 		self.img_cols = window_len
 		self.channels = channels
@@ -362,6 +364,7 @@ class ADDA():
 		self.source_encoder = Sequential()
 		inp = Input(shape=self.img_shape)
 		#self.encoder_mode=2
+		#self.encoder_mode='densenet'
 		if self.encoder_mode=='basic':
 			
 			x = Conv2D(32, kernel_size=(3, 3), activation='relu', input_shape=self.img_shape, padding='same', name=conv2d_prefix+str(count))(inp)
@@ -384,11 +387,30 @@ class ADDA():
 			#x = Conv2D(64, kernel_size=(3, 3), activation='relu', padding='same')(x)
 			#x = Conv2D(32, kernel_size=(3, 3), activation='relu', padding='same')(x)
 			#x = MaxPooling2D(pool_size=(2, 2))(x)
-		else:# self.source_encoder=='densenet':
+		elif self.encoder_mode=='densenet':
 			x = DenseNetFCN(self.img_shape, nb_dense_block=2, growth_rate=16, dropout_rate=0.2,
 					nb_layers_per_block=2, upsampling_type='deconv', classes=self.class_n, 
 					activation='softmax', batchsize=32,input_tensor=inp,
 					include_top=False)
+		elif self.encoder_mode=='vgg':
+			#input_a = Input(shape=(win_size, win_size, nc_in)) # Here I might put 128
+			_ = inp
+			ndf=4
+			max_layers=2
+			_ = conv2d(ndf, kernel_size=4, strides=2, padding="same", name = 'First') (_)
+			_ = LeakyReLU(alpha=0.2)(_)
+			
+			for layer in range(1, max_layers):        
+				out_feat = ndf * min(2**layer, 8)
+				_ = conv2d(out_feat, kernel_size=4, strides=2, padding="same", 
+						   use_bias=False, name = 'pyramid.{0}'.format(layer)             
+								) (_)
+				_ = batchnorm()(_, training=1)        
+				_ = LeakyReLU(alpha=0.2)(_)
+
+			x = Conv2DTranspose(ndf, (3, 3), padding="same",
+								strides=(4, 4), kernel_initializer='he_uniform')(_)
+			pass
 		if model_return==False:
 			self.source_encoder = Model(inputs=(inp), outputs=(x))
 			
@@ -458,13 +480,14 @@ class ADDA():
 			self.discriminator_model = Model(inputs=(inp), outputs=(x), name='discriminator')
 		else:
 			return Model(inputs=(inp), outputs=(x), name='discriminator')
-	def define_discriminator(self,nc_in, ndf, max_layers=3, use_sigmoid=True):
+	def define_discriminator(self,nc_in, ndf, max_layers=3, 
+		win_size=None,use_sigmoid=True):
 		"""DCGAN_D(nc, ndf, max_layers=3)
 		   nc: channels
 		   ndf: filters of the first layer
 		   max_layers: max hidden layers
 		"""    
-		input_a = Input(shape=(None, None, nc_in)) # Here I might put 128
+		input_a = Input(shape=(win_size, win_size, nc_in)) # Here I might put 128
 		_ = input_a
 		_ = conv2d(ndf, kernel_size=4, strides=2, padding="same", name = 'First') (_)
 		_ = LeakyReLU(alpha=0.2)(_)
@@ -725,8 +748,8 @@ class ADDA():
 				print(self.early_stop['signal'])
 				if self.early_stop["signal"]==True:
 					print("EARLY STOP EPOCH",epoch)
-					np.save("result_source/prediction.npy",data['test']['prediction'])
-					np.save("result_source/labels.npy",data['test']['label'])
+					#np.save("result_source/prediction.npy",data['test']['prediction'])
+					#np.save("result_source/labels.npy",data['test']['label'])
 					break
 	def layer_id_from_name_get(self,model,name):
 		index = None
@@ -947,7 +970,14 @@ class ADDA():
 		#discriminator  = self.define_discriminator(source['encoder'].output_shape[1:],model_return=True)
 		#discriminator = self.define_discriminator(self.channels, 64, use_sigmoid = not use_lsgan)
 		#discriminator = self.define_discriminator(128, 64, use_sigmoid = not use_lsgan)
-		discriminator = self.define_discriminator(128, 4, use_sigmoid = not use_lsgan)
+		if self.encoder_mode=='densenet':
+			D_in_filters=112
+		else:
+			D_in_filters=128
+		
+		discriminator = self.define_discriminator(D_in_filters, 4,
+			win_size=source['train']['label'].shape[1],
+			use_sigmoid = not use_lsgan)
 
 		#target['discriminator']  = self.define_discriminator(target['encoder'].output_shape[1:],model_return=True)
 		source['encoder'].summary()
@@ -1461,7 +1491,7 @@ if __name__ == '__main__':
 		if args.eval_source_classifier is None:
 			print("Training source classifier...")
 			if args.source_validating==1:
-				validation_data=target['val']
+				validation_data=source['val']
 			else:
 				validation_data=None
 			adda.source_model_train(source_model, data=source, \
