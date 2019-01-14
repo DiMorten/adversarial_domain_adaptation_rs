@@ -954,9 +954,10 @@ class ADDA():
 		testing_mode=None):   
 		
 		use_lsgan = True
-		lrD = 2e-4
+		lrD = 2e-5
 		#lrG = 2e-4
 		lrG = 2e-4
+		lrC = 2e-4
 
 
 		#lrD = lrG = 0.0001
@@ -1024,7 +1025,9 @@ class ADDA():
 		D_loss, G_loss, C_loss = D_G_C_loss(discriminator,source["encoder_out"],
 			target["encoder_out"], classifier, C_label, 
 			source['loss_weights'])
-
+		G_loss *=0
+		D_loss *=0 # 0.0001
+		
 		#G_loss = G_loss
 		# Add lambda when doing classification loss altogether
 
@@ -1038,7 +1041,7 @@ class ADDA():
 		training_updates = Adam(lr=lrG, beta_1=0.5).get_updates(G_weights,[],G_loss)
 		netG_train = K.function([target['encoder_in']],[G_loss],
 								training_updates)
-		training_updates = Adam(lr=lrG, beta_1=0.5).get_updates(C_weights,[],C_loss)
+		training_updates = Adam(lr=lrC, beta_1=0.5).get_updates(C_weights,[],C_loss)
 		netC_train = K.function([target['encoder_in'],
 								C_label],[C_loss],
 								training_updates)
@@ -1133,10 +1136,10 @@ class ADDA():
 					if D_training==True:
 						self.metricsD['train']['loss'] += netD_train([source['train']['in'][idx0:idx1],
 									target['train']['in'][idx0:idx1]])
-					C_loss+=netC_loss_view([target['val']['in'][idx0:idx1],
-						target['val']['label'][idx0:idx1]])[0]
-					#err_segmentation = netC_train([source['train']['in'][idx0:idx1],
-					#	source['train']['label'][idx0:idx1]])
+					#C_loss+=netC_loss_view([target['val']['in'][idx0:idx1],
+					#	target['val']['label'][idx0:idx1]])[0]
+					C_loss = netC_train([source['train']['in'][idx0:idx1],
+						source['train']['label'][idx0:idx1]])
 					#err_segmentation = netC_train([source['train']['in'][idx0:idx1],
 					#	source['train']['label'][idx0:idx1]])
 					#err_segmentation = netC_train([source['train']['in'][idx0:idx1],
@@ -1210,7 +1213,7 @@ class ADDA():
 				print("Epoch: {}. G_loss: {}. D_loss: {}.".format(epoch,
 					self.metricsG['train']['loss'],
 					self.metricsD['train']['loss']))
-				print("C_loss: {}".format(err_segmentation))
+				print("C_loss: {}".format(C_loss))
 				target['encoder'].save_weights('target_encoder.h5')
 				discriminator.save_weights('discriminator.h5')
 			else:
