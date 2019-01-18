@@ -507,9 +507,16 @@ class ADDA():
 		_ = LeakyReLU(alpha=0.2)(_)
 		
 		# final layer
-		_ = ZeroPadding2D(1)(_)
-		_ = conv2d(1, kernel_size=4, name = 'final'.format(out_feat, 1), 
-				   activation = "sigmoid" if use_sigmoid else None) (_)    
+		#mode='dense'
+		mode='patch'
+		if mode is not 'dense':
+			_ = ZeroPadding2D(1)(_)
+			_ = conv2d(1, kernel_size=4, name = 'final'.format(out_feat, 1), 
+					   activation = "sigmoid" if use_sigmoid else None) (_)    
+		else:
+			_ = Flatten()(_)
+			_ = Dense(2, activation='sigmoid')(_)
+
 		return Model(inputs=[input_a], outputs=_)
 
 
@@ -537,9 +544,9 @@ class ADDA():
 
 	def source_model_train(self, model, data, batch_size=6, epochs=100, \
 		save_interval=1, start_epoch=0,training=True,testing=1,
-		weights_save=True,validating=0,patience=20,
+		weights_save=True,validating=0,patience=10,
 		validation_data=None,ignore_bcknd=1,
-		testing_mode=None, early_validating=False):
+		testing_mode=None, early_validating=True):
 		self.training=training
 		deb.prints(validating)
 		batch_size=6
@@ -620,10 +627,13 @@ class ADDA():
 				self.early_stop['minimize']=True
 				self.early_stop['best']=9999
 			print("Initializing validation...")
+			if early_validating==True:
+				self.early_stop['patience']=self.batch['train']['n']*3
+				deb.prints(self.early_stop['patience'])
 
 		deb.prints(self.batch['train']['n'])
 		deb.prints(self.batch['test']['n'])
-
+		
 		if self.training==False:
 			niter=1
 
@@ -950,11 +960,13 @@ class ADDA():
 		tgt_discriminator=None, epochs=2000, batch_size=6, 
 		save_interval=1, start_epoch=0, num_batches=100,
 		target_validating=1, patience=20, 
-		early_validating=False, ignore_bcknd=1,
+		early_validating=True, ignore_bcknd=1,
 		testing_mode=None):   
 		
 		use_lsgan = True
-		lrD = 2e-5
+		#lrD = 2e-5
+		lrD = 2e-4
+		
 		#lrG = 2e-4
 		lrG = 2e-4
 		lrC = 2e-4
@@ -1025,8 +1037,16 @@ class ADDA():
 		D_loss, G_loss, C_loss = D_G_C_loss(discriminator,source["encoder_out"],
 			target["encoder_out"], classifier, C_label, 
 			source['loss_weights'])
-		G_loss *=0
-		D_loss *=0 # 0.0001
+		#G_loss *=0.0001
+		#D_loss *=0.0001 # 0.0001
+		#C_loss*=1
+
+
+
+		#C_loss*=1
+
+		#G_loss *=0
+		#D_loss *=0 # 0.0001
 		
 		#G_loss = G_loss
 		# Add lambda when doing classification loss altogether
@@ -1103,6 +1123,11 @@ class ADDA():
 		self.metricsG['train']['loss'] = np.zeros((1, 2))
 		self.metricsD['train']['loss'] = np.zeros((1, 2))
 		deb.prints(self.metricsD['train']['loss'])
+
+		if early_validating==True:
+			self.early_stop['patience']=self.batch['train']['n']*3
+			deb.prints(self.early_stop['patience'])
+
 		for epoch in range(epochs):
 			early_epoch=0
 
@@ -1131,7 +1156,7 @@ class ADDA():
 					#errG = netG_train([target['train']['in'][idx0:idx1]])
 					#errG = netG_train([target['train']['in'][idx0:idx1]])
 					
-					self.metricsG['train']['loss'] += errG
+					##self.metricsG['train']['loss'] += errG
 
 					if D_training==True:
 						self.metricsD['train']['loss'] += netD_train([source['train']['in'][idx0:idx1],
