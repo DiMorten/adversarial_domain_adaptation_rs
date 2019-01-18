@@ -546,7 +546,7 @@ class ADDA():
 		save_interval=1, start_epoch=0,training=True,testing=1,
 		weights_save=True,validating=0,patience=10,
 		validation_data=None,ignore_bcknd=1,
-		testing_mode=None, early_validating=True):
+		testing_mode=None, early_validating=False):
 		self.training=training
 		deb.prints(validating)
 		batch_size=6
@@ -615,6 +615,7 @@ class ADDA():
 
 			#metric_most_important='loss'
 			metric_most_important='f1_score_avg'
+			#metric_most_important=''
 
 
 			self.early_stop={'best':0,
@@ -630,7 +631,8 @@ class ADDA():
 			if early_validating==True:
 				self.early_stop['patience']=self.batch['train']['n']*3
 				deb.prints(self.early_stop['patience'])
-
+			#self.early_stop['patience']=150
+		
 		deb.prints(self.batch['train']['n'])
 		deb.prints(self.batch['test']['n'])
 		
@@ -912,12 +914,13 @@ class ADDA():
 				#	deb.prints(counter,fname)
 				xx = gridx[i]
 				yy = gridy[j]
-				patch = im[yy: yy + window, xx: xx + window,:]
-				label_patch = label[yy: yy + window, xx: xx + window]
-				out_patch=out['prediction'][yy: yy + window, xx: xx + window,:]
 				mask_patch = mask[yy: yy + window, xx: xx + window]
 				if np.all(mask_patch!=mask_id):
 					continue
+				patch = im[yy: yy + window, xx: xx + window,:]
+				label_patch = label[yy: yy + window, xx: xx + window]
+				out_patch=out['prediction'][yy: yy + window, xx: xx + window,:]
+
 				if model is not None:
 					# To-do: Prediction from more than 1
 					prediction=model.predict(
@@ -963,6 +966,8 @@ class ADDA():
 		early_validating=True, ignore_bcknd=1,
 		testing_mode=None):   
 		
+		patience=150
+
 		use_lsgan = True
 		#lrD = 2e-5
 		lrD = 2e-4
@@ -1103,8 +1108,8 @@ class ADDA():
 		#target_validating=False
 		
 		# Early stop init ===========
-		metric_most_important='f1_score_avg'
-		#metric_most_important='average_acc'
+		#metric_most_important='f1_score_avg'
+		metric_most_important='average_acc'
 		#metric_most_important='kappa'
 		#metric_most_important='oa_aa'
 		#metric_most_important='loss'
@@ -1126,6 +1131,7 @@ class ADDA():
 
 		if early_validating==True:
 			self.early_stop['patience']=self.batch['train']['n']*3
+			self.early_stop['patience']=150
 			deb.prints(self.early_stop['patience'])
 
 		for epoch in range(epochs):
@@ -1163,8 +1169,8 @@ class ADDA():
 									target['train']['in'][idx0:idx1]])
 					#C_loss+=netC_loss_view([target['val']['in'][idx0:idx1],
 					#	target['val']['label'][idx0:idx1]])[0]
-					C_loss = netC_train([source['train']['in'][idx0:idx1],
-						source['train']['label'][idx0:idx1]])
+					#C_loss = netC_train([source['train']['in'][idx0:idx1],
+					#	source['train']['label'][idx0:idx1]])
 					#err_segmentation = netC_train([source['train']['in'][idx0:idx1],
 					#	source['train']['label'][idx0:idx1]])
 					#err_segmentation = netC_train([source['train']['in'][idx0:idx1],
