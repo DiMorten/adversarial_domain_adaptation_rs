@@ -1108,8 +1108,8 @@ class ADDA():
 		#target_validating=False
 		
 		# Early stop init ===========
-		#metric_most_important='f1_score_avg'
-		metric_most_important='average_acc'
+		metric_most_important='f1_score_avg'
+		#metric_most_important='average_acc'
 		#metric_most_important='kappa'
 		#metric_most_important='oa_aa'
 		#metric_most_important='loss'
@@ -1169,8 +1169,8 @@ class ADDA():
 									target['train']['in'][idx0:idx1]])
 					#C_loss+=netC_loss_view([target['val']['in'][idx0:idx1],
 					#	target['val']['label'][idx0:idx1]])[0]
-					#C_loss = netC_train([source['train']['in'][idx0:idx1],
-					#	source['train']['label'][idx0:idx1]])
+					C_loss = netC_train([source['train']['in'][idx0:idx1],
+						source['train']['label'][idx0:idx1]])
 					#err_segmentation = netC_train([source['train']['in'][idx0:idx1],
 					#	source['train']['label'][idx0:idx1]])
 					#err_segmentation = netC_train([source['train']['in'][idx0:idx1],
@@ -1289,7 +1289,7 @@ class ADDA():
 			print("Epoch={}".format(epoch))	
 
 #			metric_most_important='average_acc'
-			metric_most_important='f1_score_avg'
+			#metric_most_important='f1_score_avg'
 						
 			metrics_val,_=self.test_loop(target['val'],
 				self.batch['val'],target['fn_classify'],G,
